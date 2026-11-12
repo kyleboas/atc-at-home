@@ -92,7 +92,7 @@ Approach / Ground changes that absorb the earlier departures.
 4. Score and record it: `python3 tools/experiment.py finish`
    This runs the training scenarios (~5.5 min; seed 12 is a 3-hour peak session), KEEPS the change (git commit) only if hard
    violations did not increase, approach/taxi rule violations (5-9, 3-7) did
-   not increase, and cost went down; otherwise it reverts `controller.py`. Never commit or
+   not increase, and the score went down; otherwise it reverts `controller.py`. Never commit or
    revert yourself.
 5. Append one line to `notes.md`: experiment number, kept/reverted, and what you learned.
 6. Repeat.

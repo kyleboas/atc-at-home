@@ -5,7 +5,7 @@
 
 finish: runs the train evaluation on the edited controller.py. The change is
 KEPT (committed) if hard violations did not increase, the approach and taxi
-violations (FAA JO 7110.65 5-9 and 3-7) did not increase, and cost went
+violations (FAA JO 7110.65 5-9 and 3-7) did not increase, and the score went
 down versus the best kept result; otherwise controller.py is reverted. Either way a row is
 appended to results.tsv / results.jsonl, which the dashboard plots live.
 """
@@ -78,7 +78,7 @@ def main():
         record({**s, "pass": s["status"], "n": 0, "commit": sh("git", "rev-parse", "--short", "HEAD"),
                 "status": "baseline", "idea": "baseline controller", "t": time.time()})
         write_status(state="idle", experiment=0)
-        print(f"baseline cost {s['cost']} hard {s['hard']}")
+        print(f"baseline score {s['cost']} hard {s['hard']}")
     elif cmd == "start":
         idea = " ".join(sys.argv[2:]).strip() or "(no description)"
         n = len(rs)
@@ -95,7 +95,7 @@ def main():
         improved = verdict(s, ref)[0]
         if improved:
             sh("git", "add", "controller.py")
-            msg = f"{idea}: cost {ref['cost'] if ref else '-'} -> {s['cost']}, hard {ref['hard'] if ref else '-'} -> {s['hard']}"
+            msg = f"{idea}: score {ref['cost'] if ref else '-'} -> {s['cost']}, hard {ref['hard'] if ref else '-'} -> {s['hard']}"
             sh("git", "commit", "-q", "-m", msg + "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>", check=False)
             status = "kept"
         else:
@@ -105,9 +105,9 @@ def main():
         record({**s, "pass": s["status"], "n": n, "commit": commit, "status": status, "idea": idea,
                 "t": time.time(), "seconds": round(time.time() - st.get("started", time.time()))})
         write_status(state="idle", experiment=n, last=status, idea=idea)
-        driver(f"experiment {n} {status}: cost {s['cost']} (best {ref['cost'] if ref else '-'}), hard {s['hard']} "
+        driver(f"experiment {n} {status}: score {s['cost']} (best {ref['cost'] if ref else '-'}), hard {s['hard']} "
                f"(best {ref['hard'] if ref else '-'})")
-        print(f"{status.upper()}: cost {s['cost']} (best was {ref['cost'] if ref else '-'}), "
+        print(f"{status.upper()}: score {s['cost']} (best was {ref['cost'] if ref else '-'}), "
               f"hard {s['hard']} (best was {ref['hard'] if ref else '-'})")
         print("by position:", s["violations_by_position"])
         print(f"approach/taxi violations (FAA 5-9, 3-7): {manual(s)} (best {manual(ref) if ref else '-'})")
