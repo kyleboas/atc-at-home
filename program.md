@@ -57,6 +57,10 @@ result as an issue so contributors don't repeat each other.
   taxi route meets moving traffic, give way first, then the taxi clearance. `hold_position` to stop
   taxiing traffic counts as a 2.2.1 violation unless a collision is imminent (closest approach
   < ~120 ft within 25 s, not in trail). Observation fields: `give_way`, `giving_way_now`.
+- Aircraft in the air have priority. Ground may hold departures at the gate (answer
+  `request_pushback` with `hold_position`, release later with `pushback_approved`) when the
+  airport is busy, so delay is absorbed at the gate rather than in the air, on taxiways or at the
+  runway. A minute held at the gate costs a quarter of a minute of delay anywhere else.
 - Radar: 3 nm / 1000 ft (6.2.2), MVA/terrain (6.2.1), speeds (6.15).
 
 ## Tower: anticipated separation (manual 3.1.2, 3.2.3)

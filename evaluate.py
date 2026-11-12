@@ -71,7 +71,9 @@ def metrics(sim):
     go_arounds = sum(a.m["go_arounds"] for a in acs)
     movements = (sum(1 for a in acs if a.intent == "departure" and a.m["t_airborne"])
                  + sum(1 for a in acs if a.intent == "arrival" and a.m["t_landed"]))
-    delay_min = (dep_delay + push_hold + arr_delay + mon.req_wait_s + level_s / 2 + cross_wait / 2) / 60
+    # aircraft in the air have priority: holding a departure at the gate (a ground stop) costs a quarter
+    # of the same delay in the air or at the hold-short line
+    delay_min = (dep_delay + push_hold / 4 + arr_delay + mon.req_wait_s + level_s / 2 + cross_wait / 2) / 60
     cost = (WEIGHTS["hard"] * sev["hard"] + WEIGHTS["rule"] * sev["rule"] + WEIGHTS["service"] * sev["service"]
             + WEIGHTS["go_around"] * go_arounds + delay_min)
     return {"seed": sim.seed, "level": sim.sc["level"], "cost": round(cost, 2), "hard": sev["hard"],
