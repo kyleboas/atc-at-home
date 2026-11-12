@@ -308,7 +308,20 @@ function tick(ts) {
 $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; };
 $('scrub').oninput = () => { idx = Number($('scrub').value); acc = frac = 0; draw(); };
 document.querySelectorAll('#filters input, #layers input').forEach(el => el.onchange = draw);
-c.addEventListener('wheel', e => { e.preventDefault(); view.half *= e.deltaY > 0 ? 1.12 : 0.89; view.half = Math.max(0.15, Math.min(90, view.half)); draw(); }, { passive:false });
+c.addEventListener('wheel', e => {
+  e.preventDefault();
+  // zoom in proportion to how far the wheel / trackpad moved (trackpads send many small
+  // events), capped per event; pinch on a trackpad arrives as ctrl+wheel with small deltas
+  const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  const f = Math.exp(Math.max(-0.2, Math.min(0.2, px * (e.ctrlKey ? 0.004 : 0.001))));
+  // keep the point under the pointer where it is
+  const r = c.getBoundingClientRect(), mx = (e.clientX - r.left) * devicePixelRatio, my = (e.clientY - r.top) * devicePixelRatio;
+  const k0 = P(0, 0)[2], wx = view.cx + (mx - c.width / 2) / k0, wy = view.cy - (my - c.height / 2) / k0;
+  view.half = Math.max(0.15, Math.min(90, view.half * f));
+  const k1 = P(0, 0)[2];
+  view.cx = wx - (mx - c.width / 2) / k1; view.cy = wy + (my - c.height / 2) / k1;
+  draw();
+}, { passive:false });
 // pointer input: mouse, pen and touch. One finger/mouse drags the scope, two fingers pinch-zoom,
 // a tap/click (little movement) selects the nearest aircraft.
 const pts = new Map();
