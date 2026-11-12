@@ -44,7 +44,7 @@ same thing by hand.
 3. If it beats the best, **holdout** scores it again in a sandbox (no network, no secrets) and
    on held-out scenarios that nobody has seen; they are derived from a secret and change every
    week. It compares your controller with `main` on the same scenarios and posts the result.
-   A maintainer reviews the code and merges it if it is better on both (or it is merged
+   It is labelled `ready-for-review`, and a maintainer reviews the code and merges it if it is better on both (or it is merged
    automatically, if the maintainers have turned that on). `controller.py` may only import
    `math`, `heapq` and a few other pure modules plus the `atc` package, and may not change the
    simulator's data (`tools/ci_guard.py`).
