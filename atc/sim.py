@@ -10,7 +10,7 @@ Airborne flight model and procedure flying: see sim/flight.py. Ground model:
             for traffic ahead. Routes follow the taxiway names of the clearance (drag & taxi).
   runways   a pilot never enters a runway strip without a clearance: taxi routes stop at a
             hold-short point ~260 ft from the centerline of every runway they cross until
-            "cross runway XX" is received (manual 2.2.2 / 2.3), and the departure hold point
+            "cross runway XX" is received (7110.65 3-7-2), and the departure hold point
             until line-up / takeoff clearance.
   pushback  tail first along the stand lead-in line, then the tug swings the nose to the taxi
             direction.
@@ -35,7 +35,7 @@ from .commands import ANSWERS, INFORMATIONAL, R, normalize, positions, render, r
 from .flight import Aircraft
 from .rules import Monitor
 
-PATTERN_ALT = 1500        # jets, 1,500 ft above the aerodrome (manual 3.4.1.1); KSFO is at 13 ft
+PATTERN_ALT = 1500        # jets, 1,500 ft above the aerodrome (AIM 4-3-3); KSFO is at 13 ft
 GROUND_PHASES = {"pushing", "pushed", "taxiing", "holding_short", "clear", "taxi_in", "exiting", "lining_up"}
 RUNWAY_PHASES = {"lining_up", "lined_up", "rolling", "landing_roll", "exiting", "rto"}
 TAXI_ACC = 1.0
@@ -51,6 +51,9 @@ FT = W.FT_NM
 INF = float("inf")
 AAR = 36                  # KSFO arrival acceptance rate per hour used by the ground delay program
 GDP_EXEMPT_S = 300        # arrivals in the first 5 minutes are already airborne nearby: no EDCT
+MAYDAY_MARGIN_S = 300     # Mayday fuel must land within its direct time to land plus this, or divert
+OAKLAND = (7.36, 6.15)    # KOAK (nm east, north of KSFO): the diversion airport
+DIVERT_LEAVE_S = 120      # a diverting aircraft leaves the frequency (and the session) after this
 
 
 class Sim:
@@ -208,7 +211,7 @@ class Sim:
                 break
         return end
 
-    # ------------------------------------------------------------------ give way (2.2.1)
+    # ------------------------------------------------------------------ follow traffic (3-7-2)
     @staticmethod
     def edge_name(a, b):
         ks = [k for m, k in W.ADJ[a] if m == b]
@@ -244,32 +247,19 @@ class Sim:
                 best = min(best, ps(a, c, d), ps(b, c, d), ps(c, a, b), ps(d, a, b))
         return best
 
-    def give_way_target(self, ac, to, runway=None):
-        """Traffic the pilot gives way to: on that side (or exiting that runway), the one whose path
-        meets the pilot's own first, else the nearest. IF's give way names a side, not a callsign."""
-        exiting = ("landing_roll", "exiting", "clear")
-        mine = self.ahead_pts(ac, 0.12)
-        cands = []
-        for o in self.aircraft.values():
-            if o is ac or o.m["done"] or (o.airborne and o.phase != "landing_roll"):
-                continue
-            if o.phase not in GROUND_PHASES and o.phase not in exiting:
-                continue
-            d = math.hypot(o.x - ac.x, o.y - ac.y)
-            if d > 0.4:
-                continue
-            rb = W.ang_diff(ac.hdg, W.bearing((ac.x, ac.y), (o.x, o.y)))
-            side = {"exiting": o.phase in exiting and o.intent == "arrival" and bool(o.zone)
-                               and (runway is None or o.runway == runway),
-                    "left": -160 <= rb <= -20, "right": 20 <= rb <= 160, "ahead": abs(rb) <= 45}.get(to, False)
-            if side:
-                theirs = self.ahead_pts(o, 0.25) if o.gpath and o.gk < len(o.gpath) else [(o.x, o.y)]
-                cands.append((self.poly_dist(mine, theirs) >= 0.035, d, o.cs, o))
-        return min(cands)[3] if cands else None
+    def follow_target(self, ac, cs):
+        """The traffic named in a 'follow' (3-7-2): on the ground (or rolling out), near enough to matter."""
+        o = self.aircraft.get(cs)
+        if o is None or o is ac or o.m["done"] or (o.airborne and o.phase != "landing_roll"):
+            return None
+        if o.phase not in GROUND_PHASES and o.phase not in ("landing_roll", "exiting", "clear"):
+            return None
+        return o if math.hypot(o.x - ac.x, o.y - ac.y) <= 0.6 else None
 
     def update_give_way(self, ac):
-        """Pilot giving way: keeps taxiing, stops short of the traffic's path while it conflicts, and
-        continues on their own once it has passed (or is standing still itself)."""
+        """Pilot told to follow traffic (3-7-2): keeps taxiing, stops short of the traffic's path while
+        it conflicts, and keeps the instruction until the traffic has passed (the paths met and are
+        clear again), is gone, or is standing still itself. One instruction is enough."""
         gw = ac.give_way
         o = self.aircraft.get(gw["cs"])
         gone = o is None or o.m["done"] or (o.airborne and o.phase != "landing_roll") \
@@ -282,8 +272,10 @@ class Sim:
             gw["still_s"] = gw["still_s"] + 1 if o.gspeed < 0.5 else 0
             if (gw["still_s"] > 20 and ac.gspeed < 0.5) or (o.blocked_s > 5 and ac.gspeed < 0.5):
                 gone = True                 # traffic is waiting itself (holding short, or for me): carry on
+        if conf:
+            gw["met"] = True
         gw["clear_s"] = 0 if conf else gw["clear_s"] + 1
-        if gone or gw["clear_s"] >= 3:
+        if gone or (gw.get("met") and gw["clear_s"] >= 3):
             ac.give_way, ac.gw_stop = None, False
             return
         ac.gw_stop = conf
@@ -581,8 +573,8 @@ class Sim:
             "taxi_to_runway": ph in ("pushed", "taxiing") and rw in W.DEP_RUNWAYS,
             "taxi_to_parking": ph in ("clear", "taxi_in"),
             "continue_taxi": ph in ("taxiing", "taxi_in", "pushing", "clear") and bool(ac.hold),
-            "give_way": ph in ("taxiing", "taxi_in", "clear", "pushed")
-                        and self.give_way_target(ac, cmd.get("to"), cmd.get("runway")) is not None,
+            "follow": ph in ("taxiing", "taxi_in", "clear", "pushed")
+                      and self.follow_target(ac, cmd.get("traffic")) is not None,
             "line_up_and_wait": ph == "holding_short" and self.front(ac) and rw == ac.runway,
             "cleared_takeoff": ((ph == "holding_short" and self.front(ac)) or ph in ("lining_up", "lined_up")) and rw == ac.runway,
             "cancel_takeoff": ph in ("lining_up", "lined_up", "rolling"),
@@ -593,12 +585,13 @@ class Sim:
             "sequence": ac.airborne and ac.intent == "arrival" and self.traffic_to_follow(ac, cmd.get("follow")) is not None,
             "cancel_landing_clearance": ac.airborne and ac.clearance is not None,
             "go_around": ac.airborne and ac.intent == "arrival" and (rw is None or rw in W.ARR_RUNWAYS),
-            "approach_speed": ac.airborne, "speed_at_discretion": ac.airborne, "maintain_present_speed": ac.airborne,
-            "slowest_practical_speed": ac.airborne, "best_forward_speed": ac.airborne,
-            "adjust_speed_to_follow": ac.airborne, "make_360": ac.airborne and not ac.established,
+            "approach_speed": ac.airborne, "resume_normal_speed": ac.airborne, "maintain_present_speed": ac.airborne,
+            "slowest_practical_speed": ac.airborne, "maximum_forward_speed": ac.airborne,
+            "make_360": ac.airborne and not ac.established,
             "radar_contact": radar_air, "expect_approach": radar_air and ac.intent == "arrival" and rw in P.APPROACH_IDS,
             "vector": radar_air, "continue_as_filed": radar_air,
-            "resume_own_navigation": radar_air, "altitude_at_discretion": radar_air, "expedite_altitude": radar_air,
+            "resume_own_navigation": radar_air, "descend_via": radar_air, "expedite_altitude": radar_air,
+            "cleared_to_airport": radar_air and ac.intent == "arrival" and ac.m["t_diverted"] is None,
             "maintain_speed": radar_air, "hold_present_position": radar_air,
             "hold_at_fix": radar_air and cmd.get("fix") in [lg.get("fix") for lg in ac.legs] and ac.holdp is None,
             "exit_hold": radar_air and (ac.holdp is not None or ac.hold_fix is not None),
@@ -688,7 +681,7 @@ class Sim:
         from . import commands as Cm
         return {"field": W.FIELD, "icao": W.ICAO, "elev": W.ELEV, "magvar": W.MAGVAR, "config": W.CONFIG,
                 "arr_runways": W.ARR_RUNWAYS, "dep_runways": W.DEP_RUNWAYS, "types": copy.deepcopy(W.TYPES),
-                "menus": {"altitudes": Cm.ALTITUDES, "headings": Cm.HEADINGS, "speeds": Cm.SPEEDS},
+                "values": {"altitudes": Cm.ALTITUDES, "headings": Cm.HEADINGS, "speeds": Cm.SPEEDS},
                 "sid_top": W.SID_TOP, "approach_nm": W.APPROACH_NM}
 
     def observe(self):
@@ -727,6 +720,7 @@ class Sim:
                 "exit_called": a.exit_cmd is not None,
                 "t_landed": a.m["t_landed"], "t_airborne": a.m["t_airborne"], "t_roll": a.m["t_roll"],
                 "filed_alt": a.filed_alt, "fuel": a.m["fuel_state"],
+                "mayday_by": a.m["mayday_limit"], "diverted": a.m["t_diverted"] is not None,
             })
         reqs = [dict(r) for r in self.requests if r["answered"] is None]
         return {"t": self.t, "atis": self.atis, "aircraft": acs, "requests": reqs}
@@ -755,7 +749,7 @@ class Sim:
     def spawn_arrival(self, ac, s):
         legs = P.star_legs(ac.star, ac.star_trans, ac.runway)
         alts, ends, total, pts = P.descent_profile(legs)
-        # start where the STAR is first inside the approach airspace (manual 6.9.1: 50 nm)
+        # start where the STAR is first inside the approach airspace (50 nm)
         i0, prev = 0, None
         start = None
         for i, lg in enumerate(legs):
@@ -810,18 +804,26 @@ class Sim:
         Spare = fuel left minus the time still needed to land; the final reserve is not counted.
         Minimum fuel (FAA InFO 08004, ICAO Annex 6) when under 5 min spare: an advisory, no priority.
         Mayday fuel when spare runs out: it now expects to land on its final reserve."""
-        if ac.m["nominal"] is None:
+        if ac.m["nominal"] is None or ac.m["t_diverted"] is not None:
+            return
+        if ac.m["fuel_state"] == "emergency":
+            if self.t > ac.m["mayday_limit"] and "mayday_late" not in ac.flags:
+                ac.flags.add("mayday_late")
+                self.monitor.add("hard", "2-1-4", ac, "Mayday fuel neither worked in nor diverted: still airborne "
+                                 f"{int((self.t - ac.m['t_mayday']) / 60)} min after the emergency")
             return
         left = ac.m["nominal"] + ac.fuel_extra_s - (self.t - ac.m["t_spawn"])
         spare = left - (self.eta(ac, F.remaining(ac)) or 0)
         if spare < 0 and ac.m["fuel_state"] != "emergency":
             ac.m["fuel_state"] = "emergency"
+            ac.m["t_mayday"] = self.t
+            ac.m["mayday_limit"] = self.t + (self.eta(ac, F.remaining(ac)) or 0) + MAYDAY_MARGIN_S
             ac.say(self, "fuel_emergency", {"min": max(0, int(left / 60))})
             self.monitor.add("hard", "fuel", ac, "Mayday fuel: delayed until it would land below final reserve")
         elif spare < 300 and ac.m["fuel_state"] is None:
             ac.m["fuel_state"] = "minimum"
             ac.say(self, "minimum_fuel")
-            self.monitor.add("rule", "fuel", ac, "minimum fuel: delayed to under 5 min of spare fuel")
+            self.monitor.add("rule", "2-1-8", ac, "minimum fuel: delayed to under 5 min of spare fuel")
 
     def spawn_departure(self, ac, s):
         st = W.STANDS[ac.stand]
@@ -918,12 +920,11 @@ class Sim:
             elif ph != "lining_up":
                 ac.hold = True
         elif n == "continue_taxi":
-            ac.hold = False                # a give way stays in force until the traffic has passed
-        elif n == "give_way":
-            # resolved when heard: whoever is on that side (or exiting that runway) by then
-            o = self.give_way_target(ac, cmd["to"], cmd.get("runway"))
-            if o is not None and not o.m["done"]:
-                ac.give_way = {"cs": o.cs, "to": cmd["to"], "t0": self.t, "clear_s": 0, "still_s": 0}
+            ac.hold = False                # a follow stays in force until the traffic has passed
+        elif n == "follow":
+            o = self.follow_target(ac, cmd["traffic"])
+            if o is not None:
+                ac.give_way = {"cs": o.cs, "t0": self.t, "clear_s": 0, "still_s": 0}
         elif n == "hold_short":
             ac.cross_clear.discard(cmd["runway"])
             for s in ac.gstops:
@@ -1037,17 +1038,17 @@ class Sim:
         elif n == "go_around":
             self.go_around(ac, cmd["then"], pilot=False, runway=cmd.get("runway"))
         elif n == "approach_speed":
-            ac.spd = {"kind": "kts", "kts": cmd["kts"], "until": {160: 4, 170: 5, 180: 6}[cmd["kts"]]}
-        elif n == "speed_at_discretion":
+            ac.spd = {"kind": "kts", "kts": cmd["kts"], "until": cmd["until_nm"]}
+            if cmd["kts"] < p["vapp"]:
+                ac.say(self, "unable", {"why": f"minimum speed {p['vapp']} kts"})
+        elif n == "resume_normal_speed":
             ac.spd = None
         elif n == "maintain_present_speed":
             ac.spd = {"kind": "kts", "kts": round(ac.ias), "until": None}
         elif n == "slowest_practical_speed":
             ac.spd = {"kind": "slowest"}
-        elif n == "best_forward_speed":
+        elif n == "maximum_forward_speed":
             ac.spd = {"kind": "best"}
-        elif n == "adjust_speed_to_follow":
-            ac.spd = {"kind": "follow"}
         elif n == "maintain_speed":
             ac.spd = {"kind": "kts", "kts": cmd["kts"], "until": None, "mode": cmd["mode"]}
             if cmd["kts"] < p["vapp"]:
@@ -1084,12 +1085,14 @@ class Sim:
                     ac.hold_alt = cmd["altitude"]          # a new altitude in the hold (stack step-down)
                     if ac.hold_fix is not None:
                         ac.hold_fix["alt"] = cmd["altitude"]
+        elif n == "cleared_to_airport":
+            self.divert(ac, cmd["altitude"])
         elif n in ("continue_as_filed", "resume_own_navigation"):
             ac.radar_contact = True
             self.continue_as_filed(ac)
         elif n == "direct_to":
             self.direct_to(ac, cmd["fix"])
-        elif n == "altitude_at_discretion":
+        elif n == "descend_via":
             ac.alt_assigned = None
             ac.via = True
         elif n == "expedite_altitude":
@@ -1123,6 +1126,16 @@ class Sim:
         if cur in fixes:
             i = fixes.index(cur)
             ac.set_legs(legs[i:], ac.leg_from)
+
+    def divert(self, ac, altitude):
+        """Cleared to Oakland via direct (10-2-5): the pilot turns for Oakland and leaves the frequency."""
+        ac.m["t_diverted"] = self.t
+        ac.holdp, ac.hold_fix, ac.hold_alt, ac.turn360 = None, None, None, None
+        ac.appr_cleared = None
+        ac.nav, ac.hdg_target, ac.turn_dir = "heading", W.bearing((ac.x, ac.y), OAKLAND), None
+        ac.alt_assigned = altitude
+        self.monitor.add("rule", "10-2-5", ac, "diverted to Oakland" +
+                         (" with Mayday fuel" if ac.m["fuel_state"] == "emergency" else ""))
 
     def continue_as_filed(self, ac):
         ac.turn360, ac.hold_alt = None, None
@@ -1182,7 +1195,7 @@ class Sim:
         ac.alt_assigned = None
         ac.via = True
         ac.missed = False
-        ac.spd = None if ac.spd and ac.spd.get("kind") != "kts" else ac.spd       # 6.15.10
+        ac.spd = None if ac.spd and ac.spd.get("kind") != "kts" else ac.spd       # 5-7-2
         ac.hold_alt = None
         ac.hold_fix = None
         ac.loc_armed = True
@@ -1234,7 +1247,7 @@ class Sim:
                 ac.legs_ver += 1
                 return
         # on vectors (or on a vectors leg): keep the heading with the final course armed;
-        # GPS/RNAV: proceed to the final approach course fix and fly the final segment (6.10.4)
+        # GPS/RNAV: proceed to the final approach course fix and fly the final segment (4-8-1)
         if ac.nav == "lnav" and ac.legs and ac.legs[0]["pt"] in ("FM", "VM"):
             ac.nav, ac.hdg_target = "heading", ac.hdg
         if pid[0] in ("R",) and ac.nav == "heading":
@@ -1308,10 +1321,10 @@ class Sim:
         self.expect(ac, ac.appr_req if ac.appr_req in P.APPROACH_IDS.get(ac.runway, {}) else "ils", ac.runway)
 
     def fly_circuit(self, ac, side, runway):
-        """Go around, make left/right traffic: a visual circuit at 1,500 ft (manual 3.4.1.1, jets),
+        """Go around, make left/right traffic: a visual circuit at 1,500 ft (AIM 4-3-3, jets),
         upwind -> crosswind -> downwind 2.5 nm abeam -> base -> the instrument final course at 5 nm.
         Radar (approach/departure) is always open here, so Tower still hands the aircraft to Approach
-        (3.5.4); it stays in the pattern only until then, and needs a new landing clearance to land."""
+        (3-8-1); it stays in the pattern only until then, and needs a new landing clearance to land (3-10-5)."""
         ac.missed = True
         ac.t_missed = self.t
         ac.circuit = side
@@ -1391,6 +1404,7 @@ class Sim:
 
     def threshold(self, ac):
         ac.m["t_landed"] = self.t
+        self.resolve(ac, "fuel_emergency")
         if ac.stand is None:                 # the gate is known (company) by the time the aircraft lands
             ac.stand = self.free_stand(ac)
         self.monitor.on_event("threshold", ac)
@@ -1548,6 +1562,10 @@ class Sim:
     def step_air(self, ac):
         self.fly(ac)
         if ac.m["done"] or not ac.airborne:
+            return
+        if ac.m["t_diverted"] is not None:
+            if self.t - ac.m["t_diverted"] >= DIVERT_LEAVE_S:
+                ac.m["done"] = True
             return
         d_field = math.hypot(ac.x, ac.y)
         if ac.intent == "departure":
@@ -1917,7 +1935,7 @@ class Sim:
         ac.hold_alt = hf["alt"]
 
     def check_capture(self, ac):
-        """Final course capture from a heading (manual 6.11.3): the turn starts at the lead point
+        """Final course capture from a heading (7110.65 5-9-2): the turn starts at the lead point
         R(1 - cos delta), but not before the needle comes alive, so steep or fast intercepts
         overshoot."""
         pid = ac.appr_cleared

@@ -3,7 +3,7 @@ __pycache__/
 .DS_Store
 raw/
 out/
-reference/atc-manual.txt
+reference/
 results.jsonl
 results.tsv
 status.json

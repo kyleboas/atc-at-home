@@ -115,7 +115,7 @@ class Aircraft:
         self.timer = 0.0
         self.hold = False
         self.hold_until = None
-        self.give_way = None              # {"cs": traffic, "to": side, "t0", "clear_s", "still_s"} (manual 2.2.1)
+        self.give_way = None              # {"cs": traffic, "t0", "clear_s", "still_s"}: "follow" (7110.65 3-7-2)
         self.gw_stop = False              # stopped now, giving way
         self.msg_due = None
         self.gpath = []                   # taxi polyline [(x, y, node|None)]
@@ -148,7 +148,8 @@ class Aircraft:
         self.t_freq = 0
         self.m = dict(t_spawn=None, t_push_req=None, t_push_ok=None, t_hold_short=None, t_roll=None,
                       t_airborne=None, t_landed=None, nominal=None, go_arounds=0, done=False, rto=False,
-                      level_s=0, hold_s=0, cross_wait_s=0, fuel_state=None)
+                      level_s=0, hold_s=0, cross_wait_s=0, fuel_state=None,
+                      t_mayday=None, mayday_limit=None, t_diverted=None)
         # Fuel (arrivals): minutes of delay the aircraft can absorb before it would land on its final
         # reserve (14 CFR 121.639 / ICAO Annex 6). What is left of contingency plus any extra fuel at the
         # edge of the approach airspace: about 10-25 min for narrowbodies and regionals (short trips),
@@ -490,7 +491,7 @@ def steer(ac):
 
 # ------------------------------------------------------------------ holds
 def start_hold(ac, fix, inbound, turns="R", leg_min=None, leg_nm=None, kind="hold"):
-    """Racetrack at `fix`, inbound course `inbound` (true). Entry per manual 6.7.5: direct,
+    """Racetrack at `fix`, inbound course `inbound` (true). Entry per AIM 5-3-8: direct,
     parallel or teardrop, from the heading on arrival at the fix."""
     s = 1 if turns == "R" else -1
     rel = W.ang_diff(inbound, ac.hdg) * s               # heading relative to inbound, + toward the holding side

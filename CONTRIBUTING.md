@@ -7,8 +7,8 @@ on the same frozen simulator and scoring as everyone else's.
 
 1. **Change only `controller.py`.** The simulator, data, scorer and tools are hash-checked
    (`FROZEN.sha256`); the GitHub check rejects a pull request that touches anything else.
-2. **Follow the [ATC manual](https://infiniteflight.com/guide/atc-manual) and Infinite Flight's
-   command menus** (`atc/commands.py`). Cite the manual section your change relies on in the
+2. **Follow [FAA Order JO 7110.65](https://www.faa.gov/air_traffic/publications/atpubs/atc_html/)**
+   with the instructions in `atc/commands.py`. Cite the paragraph (e.g. 5-9-2) your change relies on in the
    pull request title or description.
 3. **Procedures first:** aircraft fly their STARs, SIDs and published holds and are cleared for
    approaches on their flight plan; give headings only when needed (delay vectors, missed

@@ -6,7 +6,7 @@
 - **Airport surface data** (taxiways, stands, holding positions) is © OpenStreetMap contributors,
   available under the Open Database License (ODbL) 1.0: <https://www.openstreetmap.org/copyright>.
   The derived taxiway graph in `ksfo/data/surface.json` is distributed under the ODbL.
-- **Infinite Flight** documents (the ATC manual, guides) and the ATC command charts by Jan Polet
-  are their authors' property; this repository links to them and does not include them.
-  `tools/fetch_manual.py` downloads a personal reference copy that is not committed.
-- This project is not affiliated with or endorsed by Infinite Flight LLC or the FAA.
+- **FAA Order JO 7110.65** (Air Traffic Control), which the rules and phraseology follow, is a U.S.
+  Government work in the public domain. `tools/fetch_faa.py` downloads a local text copy
+  (`reference/`, not committed).
+- This project is not affiliated with or endorsed by the FAA.

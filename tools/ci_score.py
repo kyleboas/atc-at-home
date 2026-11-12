@@ -60,7 +60,7 @@ def main():
     if args.out:
         json.dump(res, open(args.out, "w"), indent=1)
 
-    lines = ["## ATC autoresearch: training score", "",
+    lines = ["## atc-at-home: training score", "",
              "| | this submission | current best |", "|---|---|---|"]
     for k in ("cost", "hard", "manual", "rule", "go_arounds"):
         lines.append(f"| {k} | {res[k]} | {best and (manual(best) if k == 'manual' else best.get(k))} |")

@@ -1,39 +1,40 @@
 """Baseline AI controller for KSFO (West Plan): Ground, Tower, Approach, Departure.
 
 THIS IS THE FILE AUTORESEARCH EDITS. Everything under atc/ and evaluate.py is frozen. Each
-position only talks to aircraft on its own frequency, using the menus in atc/commands.py
-(reference/if-atc-menus.md). The controller reads the airport diagram and the charts
-(atc.world, atc.procs: runways, taxiways, CIFP procedures, MVA) like a controller reads the
-published plates; it only sees traffic through the observation.
+position only talks to aircraft on its own frequency, using the FAA JO 7110.65 instructions in
+atc/commands.py. The controller reads the airport diagram and the charts (atc.world,
+atc.procs: runways, taxiways, CIFP procedures, MVA) like a controller reads the published
+plates; it only sees traffic through the observation.
 
-Baseline behaviour, by manual section:
-  Ground     pushback unless an adjacent stand is pushing (2.1.3); taxi routes by taxiway name
-             (2.2.2), shortest route on the OSM graph, departures told to contact tower when
+Baseline behaviour, by FAA JO 7110.65 paragraph:
+  Ground     pushback unless an adjacent stand is pushing (3-7-1); taxi routes by taxiway name
+             (3-7-2), shortest route on the OSM graph, departures told to contact tower when
              ready; runway crossings on the way out only when the runway is clear of landing
-             traffic per 2.3.2, in the direction in use (2.3.1), one runway at a time (2.2.2)
-  Tower      runway separation per 3.1.1 incl. the intersecting 01s x 28s: a departure rolls
-             only if it will be beyond the intersection before the next arrival reaches the
-             threshold and every landing aircraft is past the intersection or off the runway;
-             hold short when we can't (3.2.1), LUAW (3.2.3); departure behind a heavy waits
-             2/3 min (7110.65 5-8-3); contact departure 1/2 nm past the end (3.2.11); landing
-             clearance on check-in, go-around with "fly runway heading" when the runway will
-             not be clear (3.5.4); exit runway below 70 kts, then cross the parallel per 2.3.2
-             and hand to ground (3.5.3)
-  Approach   procedures first: "continue as filed, expect the ILS/RNAV" on check-in (6.9.3);
-             arrivals fly their STAR and get the approach clearance on the flight plan with
-             "maintain 3,000 until established" off the published transition (6.9.4, 6.10.2,
-             6.11.5). One landing sequence for 28L+28R (the IFs are 0.1 nm apart, so parallel
-             arrivals keep 3 nm until both are established, 6.11.7-6.11.8), spaced for wake
-             (7110.65 5-5-4), runway occupancy and a departure gap when departures wait
-             (3.6.1). Delay is absorbed with speed (6.15) and holds at a STAR fix with 1,000 ft
-             stacks (6.7); headings only where the STAR ends in vectors (BDEGA4 -> BRIXX, 6.10.4)
-             and for missed approaches: downwind, base, then a ~30 degree intercept with an
-             altitude below the glideslope (6.11.3-6.11.4). Hand to tower once established
-             (6.14).
-  Departure  radar contact on check-in (6.4.4); vertical separation first: cap the climb
-             1,000 ft under arrivals ahead (6.2.2), never below the MVA (6.2.1) or the present
-             altitude; altitude at discretion once clear (6.4.4); hand to center at the
-             boundary.
+             traffic (3-7-2, 3-1-3), one runway at a time; "follow (traffic)" to resolve taxi
+             conflicts (3-7-2)
+  Tower      runway separation (3-9-6, 3-9-8, 3-10-3, 3-10-4) incl. the intersecting 01s x
+             28s: a departure rolls only if it will be beyond the intersection before the next
+             arrival reaches the threshold and every landing aircraft is past the intersection
+             or off the runway; hold short when we can't, line up and wait (3-9-4); departure
+             behind a heavy waits 2/3 min (3-9-6); transfer to departure once airborne
+             (2-1-17); landing clearance on check-in (3-10-5), go-around with "fly runway
+             heading" when the runway will not be clear (3-8-1); exit runway (3-10-9), then
+             cross the parallel and hand to ground
+  Approach   procedures first: "expect the ILS/RNAV, resume the arrival" on check-in (4-7-10,
+             5-6-2); arrivals fly their STAR and get the approach clearance with "maintain
+             3,000 until established" off the published transition (5-9-4). One landing
+             sequence for 28L+28R (the IFs are 0.1 nm apart, so parallel arrivals keep 3 nm
+             until both are established, 5-9-6), spaced for wake (5-5-4), runway occupancy and
+             a departure gap when departures wait. Delay is absorbed with speed (5-7) and holds
+             at a STAR fix with 1,000 ft stacks and an EFC (4-6-1); headings only where the
+             STAR ends in vectors (BDEGA4 -> BRIXX, 5-6-2) and for missed approaches: downwind,
+             base, then a 30 degree intercept outside the approach gate with an altitude below
+             the glideslope (5-9-1, 5-9-2). Transfer to tower before the gate (5-9-4). Mayday
+             fuel gets priority in the sequence, or a diversion to Oakland when it cannot land
+             in time (2-1-4, 10-2-5).
+  Departure  radar contact on check-in (5-3-2); vertical separation first: cap the climb
+             1,000 ft under arrivals ahead (5-5-4), never below the MVA (5-6-3) or the present
+             altitude; hand to center at the boundary (2-1-17).
 """
 import heapq
 import math
@@ -47,25 +48,19 @@ FT = W.FT_NM
 
 
 def mag(h_true):
-    """Menu heading (magnetic, 10 degree steps) nearest a true heading."""
+    """Assigned heading (magnetic, rounded to 10 degrees) nearest a true heading."""
     h = int(round(W.true2mag(h_true) / 10.0)) * 10 % 360
     return 360 if h == 0 else h
 
 
-def menu_alt_below(a):
-    """Highest menu altitude <= a."""
-    best = ALTITUDES[0]
-    for v in ALTITUDES:
-        if v <= a:
-            best = v
-    return best
+def alt_below(a):
+    """Highest assignable altitude (100 ft steps) <= a."""
+    return min(max(ALTITUDES[0], int(a // 100) * 100), ALTITUDES[-1])
 
 
-def menu_alt_above(a):
-    for v in ALTITUDES:
-        if v >= a:
-            return v
-    return ALTITUDES[-1]
+def alt_above(a):
+    """Lowest assignable altitude (100 ft steps) >= a."""
+    return min(max(ALTITUDES[0], -int(-a // 100) * 100), ALTITUDES[-1])
 
 
 def dist(a, b):
@@ -73,14 +68,14 @@ def dist(a, b):
 
 
 def mva_ahead(x, y, hdg_true, gs, minutes=3.0):
-    """Highest MVA along the next `minutes` on this heading (what 6.3.2 is checked against)."""
+    """Highest MVA along the next `minutes` on this heading."""
     ux, uy = W.unit(hdg_true)
     d = gs / 60 * minutes
     return max(W.mva(x + ux * d * k / 6, y + uy * d * k / 6) for k in range(7))
 
 
 def mva_clear_360(a, r=4.5):
-    """A 360 here stays above the MVA everywhere within its ~2 nm radius circle (6.2.1, 6.3.2)."""
+    """A 360 here stays above the MVA everywhere within its ~2 nm radius circle (5-6-3)."""
     pts = [(a["x"] + r * math.sin(math.radians(b)), a["y"] + r * math.cos(math.radians(b))) for b in range(0, 360, 45)]
     alt = min(a["alt"], a.get("alt_assigned") or a["alt"])         # it keeps descending in the turn
     return alt >= max(W.mva(x, y) for x, y in pts + [(a["x"], a["y"])]) + 300
@@ -148,7 +143,8 @@ def slowest_time(perf, rem, alt, gs_now=None):
 RWY28R = W.RUNWAYS["28R"]
 LOC_T = RWY28R.loc_course                   # true
 DOWNWIND_T, BASE_T = W.mag2true(90), W.mag2true(180)
-INTERCEPT_MAG = 250                         # 34 degrees to the 28R localizer (284 mag), from the north
+MAYDAY_MARGIN_S = 180      # a Mayday's slot must land this far inside its fuel deadline, or it diverts
+INTERCEPT_MAG = 254                         # 30 degrees to the 28R localizer (284 mag), from the north (5-9-2)
 INTERCEPT_T = W.mag2true(INTERCEPT_MAG)
 DOWNWIND_ALT = 7000
 INTERCEPT_OFFSET = 2.6                      # nm right of the final course when turning to intercept
@@ -260,7 +256,8 @@ class Controller:
         self.tower.step(obs, acs, reqs, out)
         self.approach.step(obs, acs, reqs, out)
         self.departure.step(obs, acs, reqs, out)
-        return out
+        gone = {cs for cs, a in acs.items() if a["diverted"]}
+        return [m for m in out if m["cs"] not in gone]
 
 
 # ---------------------------------------------------------------------------- runway picture
@@ -328,7 +325,7 @@ def speed_cap(a):
 
 
 def crossing_near(o, rwy):
-    """Cleared to cross runway rwy and past its hold line (within 230 ft of the centerline, 2.3.2)."""
+    """Cleared to cross runway rwy and past its hold line (within 230 ft of the centerline, 3-7-2)."""
     if o["airborne"] or rwy not in (o.get("cross_clear") or []):
         return False
     R = W.RUNWAYS[rwy]
@@ -348,11 +345,12 @@ class Ground:
         self.route_cache = {}
         self.wait = {}          # cs -> (cs it waits for, shared nodes)
         self.stopped = {}       # (cs, cs) -> t: both told to hold position, collision imminent
+        self.held = {}          # cs -> (cs it yields to, t): stays holding until that traffic is clear
 
     def route(self, start, goal, acs=None, me=None):
         """Shortest taxi route on the OSM graph (as the sim's pilots taxi it), never along a runway,
         stand lead-in lines only at the ends; extra cost to enter a runway strip, to use a taxiway
-        another aircraft will taxi the opposite way (2.2.1), or to pass an aircraft standing still.
+        another aircraft will taxi the opposite way (3-7-1), or to pass an aircraft standing still.
         Returns (nodes, via names)."""
         pen_edge, pen_node = {}, set()
         if acs:
@@ -453,7 +451,7 @@ class Ground:
             if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs):
                 c.send(out, C.pushback_approved(a["cs"], expect_runway=a["runway"]))
         self.deconflict(acs, out)
-        # runway crossings on the taxi route (2.3.2, anticipated 2.3.3)
+        # runway crossings on the taxi route (3-7-2, anticipated)
         for a in acs.values():
             if a["freq"] != "ground" or not a.get("crossings") or a["phase"] not in ("taxiing", "taxi_in"):
                 continue
@@ -467,7 +465,7 @@ class Ground:
                 c.send(out, C.cross_runway(a["cs"], runway=nxt["rwy"]))
 
     def deconflict(self, acs, out):
-        """Opposite-direction traffic on the same taxiway (2.2.1): the aircraft that reaches the
+        """Opposite-direction traffic on the same taxiway (3-7-1): the aircraft that reaches the
         shared stretch later holds position short of it until the other has passed."""
         c = self.c
         movers = [a for a in acs.values() if a["phase"] in ("taxiing", "taxi_in") and a.get("groute")]
@@ -520,7 +518,7 @@ class Ground:
                     continue
                 waiter, other, dw = (a, b, da) if da > db else (b, a, db)
                 if _in_path(waiter, other):
-                    waiter, other, dw = other, waiter, min(da, db)   # the one in the way cannot give way
+                    waiter, other, dw = other, waiter, min(da, db)   # the one in the way cannot yield
                 if dw < 0.008 or not c.quiet(waiter["cs"], 3):
                     continue                           # already on it (cannot stop short)
                 if dw > 0.25:
@@ -530,13 +528,24 @@ class Ground:
                     waiter, other, side = other, waiter, _side(other, waiter)   # traffic behind: it gives way
                 if not side:
                     continue
-                c.send(out, C.give_way(waiter["cs"], to=side))     # 2.2.1
+                self.follow(out, waiter, other)                     # 3-7-2
                 self.wait[waiter["cs"]] = (other["cs"], shared, c.t)
 
     def imminent(self, acs, out):
-        """Hold position is for an imminent collision only (2.2.1): stop both, then one gives way."""
+        """Hold position is for an imminent collision only (3-7-2): stop both, then one follows the other."""
         c = self.c
         movers = [a for a in acs.values() if a["freq"] == "ground" and a["phase"] in ("taxiing", "taxi_in")]
+        for cs, (ocs, t0) in list(self.held.items()):
+            a, o = acs.get(cs), acs.get(ocs)
+            if a is None or a["phase"] not in ("taxiing", "taxi_in"):
+                self.held.pop(cs)
+                continue
+            clear = o is None or o["phase"] not in ("taxiing", "taxi_in", "pushing") \
+                or (dist((a["x"], a["y"]), (o["x"], o["y"])) > 0.04 and not _in_path(a, o))
+            if (clear or c.t - t0 > 45) and c.quiet(cs, 4):
+                self.held.pop(cs)
+                if a["hold"]:
+                    c.send(out, C.continue_taxi(cs))   # the traffic has passed; still following it
         for pair, t0 in list(self.stopped.items()):
             a, b = acs.get(pair[0]), acs.get(pair[1])
             if a is None or b is None or a["phase"] not in ("taxiing", "taxi_in") or b["phase"] not in ("taxiing", "taxi_in"):
@@ -554,17 +563,18 @@ class Ground:
             side = _side(loser, winner) or "ahead"
             if winner["hold"]:
                 c.send(out, C.continue_taxi(winner["cs"]))
-            c.send(out, C.give_way(loser["cs"], to=side))
-            if loser["hold"]:
-                c.send(out, C.continue_taxi(loser["cs"]))
+            self.follow(out, loser, winner, again=True)
+            self.held[loser["cs"]] = (winner["cs"], c.t)     # keeps holding until the winner is clear
             self.wait.pop(loser["cs"], None)
             self.wait.pop(winner["cs"], None)
             self.stopped.pop(pair)
-        busy = {cs for p in self.stopped for cs in p}
+        busy = {cs for p in self.stopped for cs in p} | set(self.held)
         for i, a in enumerate(movers):
             for b in movers[i + 1:]:
                 if a["cs"] in busy or b["cs"] in busy or (a["gs"] < 3 and b["gs"] < 3):
                     continue
+                if a.get("give_way") == b["cs"] or b.get("give_way") == a["cs"]:
+                    continue                           # already following it: the pilot stops short
                 if not _imminent(a, b):
                     continue
                 for x in (a, b):
@@ -573,8 +583,17 @@ class Ground:
                 self.stopped[(a["cs"], b["cs"])] = c.t
                 busy |= {a["cs"], b["cs"]}
 
+    def follow(self, out, a, o, again=False):
+        """"Follow (traffic)" once per pair (3-7-2): the pilot keeps it until the traffic has passed.
+        again: after both were stopped (hold position), restate it if the pilot no longer has it."""
+        if a.get("give_way") == o["cs"]:
+            return
+        if not self.c.once(a["cs"], ("follow", o["cs"])) and not again:
+            return
+        self.c.send(out, C.follow(a["cs"], traffic=o["cs"]))
+
     def give_way_first(self, a, nodes, acs, out):
-        """2.2.1: if the new taxi route meets moving traffic right away, give way first, then taxi."""
+        """3-7-2: if the new taxi route meets moving traffic right away, "follow" it first, then taxi."""
         mine = [(a["x"], a["y"])] + [W.NODES[n] for n in nodes[:4]]
         for o in acs.values():
             if o is a or o["airborne"] or o["phase"] not in ("taxiing", "taxi_in", "exiting", "landing_roll") or o["gs"] < 3:
@@ -585,7 +604,7 @@ class Ground:
             if _poly_dist(mine, theirs) < 0.04:
                 side = _side(a, o)
                 if side:
-                    self.c.send(out, C.give_way(a["cs"], to=side))
+                    self.follow(out, a, o)
                     return
 
     @staticmethod
@@ -628,7 +647,7 @@ def _in_path(a, o):
 
 
 def _side(a, o):
-    """Give way menu side for traffic o as seen from a: exiting / ahead / left / right (None if behind)."""
+    """Where traffic o is as seen from a: exiting / ahead / left / right (None if behind)."""
     if o["phase"] in ("exiting", "landing_roll") or (o["phase"] == "clear" and o["intent"] == "arrival" and o.get("zone")):
         return "exiting"
     rb = W.ang_diff(a["hdg"], W.bearing((a["x"], a["y"]), (o["x"], o["y"])))
@@ -709,7 +728,7 @@ class Tower:
                    for a in acs.values())
 
     def departure_ok(self, a, acs, extra_s=0.0):
-        """Can departure `a` start its roll in ~extra_s seconds without breaking 3.1.1 or wake?"""
+        """Can departure `a` start its roll in ~extra_s seconds without breaking runway separation (3-9-6, 3-9-8) or wake?"""
         rw = a["runway"]
         t = self.c.t
         for o in acs.values():
@@ -733,7 +752,7 @@ class Tower:
                 if o["phase"] in ("taxiing", "taxi_in", "clear", "holding_short", "lining_up"):
                     return False
             if crossing_near(o, rw):
-                return False                         # cleared to cross this runway, at it (2.3.2)
+                return False                         # cleared to cross this runway, at it (3-7-2)
         for o in self.landing_users(acs):
             if (rw, o["runway"]) in W.INTERSECTIONS and not self.beyond(o, o["runway"], rw):
                 return False
@@ -747,7 +766,7 @@ class Tower:
         return True
 
     def crossing_ok(self, rwy, a, acs):
-        """2.3.2: cross a landing runway only if nothing is landing or rolling toward the
+        """3-7-2, 3-1-3: cross a landing runway only if nothing is landing or rolling toward the
         crossing point and the next arrival is far enough out to be clear of the runway edge."""
         R = W.RUNWAYS[rwy]
         u_x = R.u((a["x"], a["y"]))
@@ -762,7 +781,7 @@ class Tower:
                 return False
             if o["runway"] == rwy and o["intent"] == "departure" and not o["airborne"] and \
                     (o["takeoff_cleared"] or o["cs"] in self.to_cleared):
-                return False                         # a departure cleared to roll on it (2.3.2)
+                return False                         # a departure cleared to roll on it (3-7-2)
             # someone else already crossing this runway close by is fine; nobody lined up for it
         for e, o in self.arrivals(acs):
             if o["runway"] == rwy and e < 75:
@@ -817,7 +836,7 @@ class Tower:
                 c.send(out, C.contact_frequency(cs, facility="ground"))
 
     def must_go_around(self, a, acs):
-        """The runway will not be clear when this aircraft crosses the threshold (3.1.1)."""
+        """The runway will not be clear when this aircraft crosses the threshold (3-10-3)."""
         rw = a["runway"]
         e = landing_eta(self.c, a) or 0
         for o in acs.values():
@@ -853,7 +872,7 @@ class Tower:
         c = self.c
         t = c.t
         ready = {r["cs"] for r in reqs if r["kind"] == "ready_for_departure"}
-        # cancel a takeoff clearance that no longer works (3.1.2/3.1.3)
+        # cancel a takeoff clearance that no longer works (3-9-6/3-9-11)
         for a in acs.values():
             if a["freq"] == "tower" and a["intent"] == "departure" and a["phase"] in ("lined_up", "lining_up") \
                     and a["takeoff_cleared"] and c.quiet(a["cs"], 4):
@@ -888,7 +907,7 @@ class Tower:
             for a in holding:
                 if a["cs"] in ready and c.quiet(a["cs"], 3) and c.once(a["cs"], "hs"):
                     c.send(out, C.hold_short(a["cs"], runway=rw))
-        # airborne departures: contact departure 1/2 nm past the end (3.2.11)
+        # airborne departures: contact departure 1/2 nm past the end (2-1-17)
         for a in acs.values():
             if a["freq"] == "tower" and a["intent"] == "departure" and a["airborne"]:
                 R = W.RUNWAYS[a["runway"]]
@@ -899,7 +918,7 @@ class Tower:
                 pass
 
     def immediate(self, acs):
-        """3.2.7: 'immediate' only with an arrival inside ~3 nm."""
+        """3-9-10: 'immediate' only with an arrival inside ~3 nm."""
         return any(o["intent"] == "arrival" and o["airborne"] and (o["rem_nm"] or 99) <= 3.0 and not o["missed"]
                    for o in acs.values())
 
@@ -908,7 +927,7 @@ class Tower:
         rw = a["runway"]
         for o in acs.values():
             if o is not a and (crossing_near(o, rw) or (on_runway(o, rw) and o["phase"] in ("taxiing", "taxi_in", "clear"))):
-                return True                          # crossing traffic on the runway (3.1.1)
+                return True                          # crossing traffic on the runway (3-9-8)
         for e, o in self.arrivals(acs):
             if (rw, o["runway"]) in W.INTERSECTIONS and e < self.ROLL_BEYOND_S + 6:
                 return True
@@ -942,6 +961,7 @@ class Approach:
         self.t360 = {}
         self.level = {}         # cs -> (altitude, other cs): conflict probe level-offs
         self.reseq = set()      # vectored arrivals moved to the first uncommitted slot
+        self.priority = set()   # Mayday fuel worked in ahead of the uncommitted sequence
         self.acs = {}
 
     # ---- spacing
@@ -959,13 +979,13 @@ class Approach:
         if same:
             g = max(g, 92.0)                         # runway occupancy (landing roll + exit), 2.5 nm
         if dep_gap:
-            g = max(g, 110.0)                        # 3.6.1: room for a departure between arrivals
+            g = max(g, 110.0)                        # 3-9-6: room for a departure between arrivals
         return g
 
     def schedule(self, acs, t):
         arr = []
         for a in acs.values():
-            if a["intent"] != "arrival" or not a["airborne"] or a["runway"] not in W.ARR_RUNWAYS:
+            if a["intent"] != "arrival" or not a["airborne"] or a["runway"] not in W.ARR_RUNWAYS or a["diverted"]:
                 continue
             e = landing_eta(self.c, a)
             if e is None:
@@ -988,7 +1008,7 @@ class Approach:
                 self.key[arr[i][2]["cs"]] = k
                 arr[i] = (k, arr[i][1], arr[i][2])
         arr.sort(key=lambda p: p[0])
-        # 3.6.1: when departures are on their way to the runway, every other new arrival in the
+        # 3-9-6: when departures are on their way to the runway, every other new arrival in the
         # sequence brings a departure gap with it (decided once, so slots do not jump around)
         dep_wait = sum(1 for a in acs.values() if a["intent"] == "departure" and
                        a["phase"] in ("holding_short", "lining_up", "lined_up", "taxiing", "pushed"))
@@ -1001,7 +1021,7 @@ class Approach:
         sta = self.slots(arr)
         # a vectored arrival the pattern cannot delay to its slot (downwind/base, missed approach)
         # takes the first slot not committed to another arrival; the uncommitted ones behind it
-        # (holding, or far out) absorb the extra gap instead (6.11.8, 6.7.4)
+        # (holding, or far out) absorb the extra gap instead (5-9-6, 4-6-1)
         moved = False
         for i, (key, eta, a) in enumerate(arr):
             cs = a["cs"]
@@ -1026,6 +1046,62 @@ class Approach:
             sta = self.slots(arr)
         self.sta = sta
         return arr
+
+    def emergencies(self, arr, t, out):
+        """Mayday fuel: priority over all other traffic (7110.65 2-1-4). It lands behind only what
+        is physically ahead of it: arrivals cleared for or established on the approach, those that
+        land before it could anyway, and holders below it in the same stack. If even that slot is
+        too late for its fuel, clear it to Oakland as it asked (10-2-5). Returns True if the order moved."""
+        c = self.c
+        moved = False
+        sta_now = None
+        for i, (key, eta, a) in enumerate(arr):
+            cs = a["cs"]
+            if a["fuel"] != "emergency" or a["freq"] != "approach" or not a["radar_contact"]:
+                continue
+            if cs in self.priority:
+                # the slot slipped (a go-around, a missed approach, traffic that could not move):
+                # divert while it still can rather than land below its reserve
+                if not a["established"] and cs not in self.cleared:
+                    sta_now = sta_now or self.slots(arr)
+                    if sta_now[cs] > (a["mayday_by"] or 0) - MAYDAY_MARGIN_S:
+                        self.divert(a, out)
+                continue
+            h = self.hold.get(cs)
+            below = set()
+            if h is not None and not h.get("out"):
+                below = {o for o, hh in self.hold.items() if o != cs and o in self.acs and hh["fix"] == h["fix"]
+                         and hh["alt"] < h["alt"] and not hh.get("out")}
+            rest = [p for p in arr if p[2]["cs"] != cs]
+            j = 0
+            for m, (k, e, o) in enumerate(rest):
+                ocs = o["cs"]
+                oh = self.hold.get(ocs)
+                holding = oh is not None and not oh.get("out")      # can hold another lap
+                if o["established"] or ocs in below or ocs in self.priority \
+                        or (e < eta - 20 and not holding) or (ocs in self.cleared and e < eta + 60):
+                    j = m + 1
+            trial = rest[:j] + [(key, eta, a)] + rest[j:]
+            sta = self.slots(trial)[cs]
+            if sta > (a["mayday_by"] or 0) - MAYDAY_MARGIN_S:
+                self.divert(a, out)
+                continue
+            self.priority.add(cs)
+            if j < i:
+                lo = rest[j - 1][0] if j > 0 else rest[0][0] - 2.0
+                self.key[cs] = (lo + rest[j][0]) / 2.0
+                moved = True
+        return moved
+
+    def divert(self, a, out):
+        """Clear a Mayday fuel aircraft to Oakland, as it asked (4-2-1, 10-2-5)."""
+        cs = a["cs"]
+        if self.c.once(cs, "divert"):
+            self.c.send(out, C.cleared_to_airport(cs, airport="KOAK",
+                                                  altitude=max(3000, int(round(a["alt"] / 1000)) * 1000)))
+            self.hold.pop(cs, None)
+            self.vec.pop(cs, None)
+            self.priority.discard(cs)
 
     def slots(self, arr):
         prev = None
@@ -1099,6 +1175,8 @@ class Approach:
             c.send(out, C.expect_approach(a["cs"], approach=kind, runway=a["runway"], then=then))
             self.kind[a["cs"]] = kind
         arr = self.schedule(acs, t)
+        if self.emergencies(arr, t, out):
+            arr = self.schedule(acs, t)
         for key, eta, a in arr:
             if a["freq"] != "approach" or not a["radar_contact"]:
                 continue
@@ -1116,7 +1194,7 @@ class Approach:
         self.handoffs(acs, out)
 
     def probe(self, acs, out):
-        """Conflict probe (6.2.2): two minutes straight ahead; resolve vertically by levelling the
+        """Conflict probe (5-5-4): two minutes straight ahead; resolve vertically by levelling the
         aircraft that is moving toward the other's level, 1,000 ft away from it. Release when clear."""
         c = self.c
         mine = [a for a in acs.values() if a["freq"] == "approach" and a["airborne"] and not a["established"]
@@ -1138,7 +1216,7 @@ class Approach:
                         elif v and v["phase"] == "base":
                             c.send(out, C.vector(cs, altitude=self.intercept_alt(a, "base")))
                         elif not v:
-                            c.send(out, C.altitude_at_discretion(cs))
+                            c.send(out, C.descend_via(cs))
                 continue
             if not c.quiet(cs, 8) or cs in self.cleared:
                 continue
@@ -1157,12 +1235,12 @@ class Approach:
                     continue
                 # a is moving toward o's level (or already within 1,000 ft): level a 1,000 ft away
                 if dz >= 0:
-                    lvl = menu_alt_above(o["alt"] + 1000)
+                    lvl = alt_above(o["alt"] + 1000)
                     if lvl > a["alt"] + 600 and dz * a["vs"] >= 0:
                         continue
                 else:
-                    lvl = menu_alt_below(o["alt"] - 1000)
-                    lvl = max(lvl, menu_alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])))
+                    lvl = alt_below(o["alt"] - 1000)
+                    lvl = max(lvl, alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])))
                     if lvl > o["alt"] - 900:
                         continue
                 c.send(out, C.vector(cs, altitude=lvl))
@@ -1170,7 +1248,7 @@ class Approach:
                 break
 
     def co_level(self, acs, out):
-        """6.2.2: two level aircraft at the same level closing (the probe only stops climbs and
+        """5-5-4: two level aircraft at the same level closing (the probe only stops climbs and
         descents toward another's level): the follower moves 1,000 ft, down if the MVA allows."""
         c = self.c
         for a in acs.values():
@@ -1187,9 +1265,9 @@ class Approach:
                     continue
                 if closest_approach(a, o, 120) > 3.3:
                     continue
-                lvl = menu_alt_below(o["alt"] - 1000)
-                if lvl < menu_alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])):
-                    lvl = menu_alt_above(o["alt"] + 1000)
+                lvl = alt_below(o["alt"] - 1000)
+                if lvl < alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])):
+                    lvl = alt_above(o["alt"] + 1000)
                 c.send(out, C.vector(cs, altitude=lvl))
                 self.level[cs] = (lvl, o["cs"])
                 break
@@ -1206,8 +1284,8 @@ class Approach:
         return None if vec else fix
 
     def clear(self, a, out):
-        """Approach clearance on the flight plan off the STAR's published transition (6.10.2,
-        6.11.5), with 3,000 ft (below the glidepath at the IF) until established."""
+        """Approach clearance on the flight plan off the STAR's published transition (4-8-1,
+        5-9-4), with 3,000 ft (below the glidepath at the IF) until established."""
         cs = a["cs"]
         self.c.send(out, C.cleared_approach(cs, approach=self.kind_of(a), runway=a["runway"], altitude=3000))
         self.cleared.add(cs)
@@ -1220,10 +1298,10 @@ class Approach:
         rem = a["rem_nm"] or 99
         if not c.quiet(cs, 6):
             return
-        # BDEGA4 ends in vectors at BRIXX: downwind from CORKK (6.10.4)
+        # BDEGA4 ends in vectors at BRIXX: downwind from CORKK (5-6-2)
         if a["star"] == "BDEGA4" and not a["holding"] and a["hold_fix"] is None \
                 and (a["leg"] == "vectors" or (route and route[0] == "BRIXX")):
-            alt = max(DOWNWIND_ALT, menu_alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
+            alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
             c.send(out, C.vector(cs, heading=90, altitude=alt))
             out.append(C.maintain_speed(cs, kts=210, mode=None))
             self.vec[cs] = {"phase": "downwind"}
@@ -1233,19 +1311,19 @@ class Approach:
             if cs in self.hold:
                 self.manage_hold(a, delay, acs, out)
             elif cs not in self.cleared and delay < 150 and self.star_end(a):
-                self.clear(a, out)                     # holding at the clearance limit (6.9.4)
+                self.clear(a, out)                     # holding at the clearance limit (4-6-2)
             return
         hf = HOLD_FIX.get(a["star"])
         if a["hold_fix"] is not None:
             return
-        # 1) holds at the stream's fix when speed alone cannot absorb the delay (6.7), stacked 1,000 ft
+        # 1) holds at the stream's fix when speed alone cannot absorb the delay (4-6-1), stacked 1,000 ft
         absorb = absorbable(c.perf(a), rem, a["alt"]) if a["star"] != "BDEGA4" else TROMBONE_S
         if delay > absorb + 15 and delay < absorb + 150 and cs not in self.cleared and rem > 12 \
                 and c.quiet(cs, 30) and self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs):
-            c.send(out, C.make_360(cs, direction="right"))           # ~150 s of delay (6.7.2)
+            c.send(out, C.make_360(cs, direction="right"))           # ~150 s of delay (5-6-2)
             self.t360[cs] = c.t
             return
-        # an active stack on the route is joined on top, never descended through (6.7.2, 6.2.2)
+        # an active stack on the route is joined on top, never descended through (4-6-1, 5-5-4)
         through = bool(hf and hf[0] in route[:2] and cs not in self.cleared and self.stack_active(hf[0], a, acs))
         if hf and (delay > absorb + 15 or through) and hf[0] in route[:2] and cs not in self.cleared:
             alt = self.stack_alt(hf, a, acs)
@@ -1266,7 +1344,8 @@ class Approach:
                     self.hold[swap]["alt"] = alt
                     c.send(out, C.vector(swap, altitude=alt))
                     alt = low
-                c.send(out, C.hold_at_fix(cs, fix=hf[0], altitude=alt, turns=HOLD_TURNS.get(hf[0], "right")))
+                c.send(out, C.hold_at_fix(cs, fix=hf[0], altitude=alt, turns=HOLD_TURNS.get(hf[0], "right"),
+                                          efc=int(max(c.t, self.sta.get(cs, c.t + 600) - 600))))
                 self.hold[cs] = {"fix": hf[0], "alt": alt}
                 self.speed.pop(cs, None)
                 return
@@ -1278,13 +1357,13 @@ class Approach:
             if p and dist((a["x"], a["y"]), p) < 14 and route.index(end) <= 1:
                 self.clear(a, out)
                 return
-        # 3) too early even at the slowest speed and no hold ahead: a 360 (6.7.2) if nobody follows close
+        # 3) too early even at the slowest speed and no hold ahead: a 360 (5-6-2) if nobody follows close
         if delay > absorb + 45 and not a["established"] and rem > 10 and c.quiet(cs, 40) \
                 and self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs):
             c.send(out, C.make_360(cs, direction="right"))
             self.t360[cs] = c.t
             return
-        # 4) speed (6.15): the fastest speed that still meets the slot
+        # 4) speed (5-7): the fastest speed that still meets the slot
         self.speed_control(a, acs, out)
 
     def stack_active(self, fix, a, acs):
@@ -1325,7 +1404,7 @@ class Approach:
 
     def speed_control(self, a, acs, out):
         """Pick the fastest of: own speed, 240-210 kts (while > 16 nm out), approach speed 180/170/160
-        (to 6/5/4 nm) or slowest practical (> 6 nm, never inside 4 nm, 3.1.4), whose ETA is not
+        (to 6/5/4 nm) or slowest practical (> 6 nm, never inside 4 nm, 5-7-1), whose ETA is not
         early for the slot. Changes at most every 30 s, and only for a 15 s improvement."""
         c = self.c
         cs = a["cs"]
@@ -1364,13 +1443,13 @@ class Approach:
                 return
         v, kind, _ = best
         if kind is None:
-            c.send(out, C.speed_at_discretion(cs))
+            c.send(out, C.resume_normal_speed(cs))
             self.speed.pop(cs, None)
         elif kind == "kts":
             c.send(out, C.maintain_speed(cs, kts=v, mode=None))
             self.speed[cs] = (v, kind)
         elif kind == "app":
-            c.send(out, C.approach_speed(cs, kts=v))
+            c.send(out, C.approach_speed(cs, kts=v, until_nm=6 if v >= 180 else 5))
             self.speed[cs] = (v, kind)
         else:
             c.send(out, C.slowest_practical_speed(cs))
@@ -1398,7 +1477,7 @@ class Approach:
         if lowest and delay < absorb * 0.9 + 10 and c.once(cs, "exit_hold"):
             h["out"] = True
             c.send(out, C.exit_hold(cs))
-            out.append(C.altitude_at_discretion(cs))
+            out.append(C.descend_via(cs))
             return
         below = h["alt"] - 1000
         if below >= HOLD_FIX_BASE.get(h["fix"], 0) and c.quiet(cs, 20):
@@ -1412,7 +1491,7 @@ class Approach:
 
     def fly_vectors(self, a, delay, acs, out):
         """BDEGA4 ends in vectors at BRIXX, and missed approaches: downwind (090) at 7,000, base
-        (180), then a 34 degree intercept (250) to the 28R localizer below the glideslope."""
+        (180), then a 30 degree intercept (254) to the 28R localizer below the glideslope."""
         c = self.c
         cs = a["cs"]
         v = self.vec[cs]
@@ -1422,13 +1501,13 @@ class Approach:
         if ph == "missed":
             # runway heading to the missed approach altitude, then right turn north over the bay
             if a["alt"] > 1500 and a["x"] < -1.5:
-                alt = max(5000, menu_alt_above(mva_ahead(a["x"], a["y"], W.mag2true(360), a["gs"])))
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(360), a["gs"])))
                 c.send(out, C.vector(cs, heading=360, altitude=alt))
                 v["phase"] = "missed_north"
             return
         if ph == "missed_north":
             if a["y"] > 4.0:
-                alt = max(5000, menu_alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
                 c.send(out, C.vector(cs, heading=90, altitude=alt))
                 out.append(C.maintain_speed(cs, kts=210, mode=None))
                 self.speed[cs] = (210, "kts")
@@ -1439,8 +1518,8 @@ class Approach:
             v["x_base"] = xb
             if not a["leg"] == "360" and self.trombone_short(a, max(xb, a["x"])) > 60:
                 # more delay than the trombone can take: a 360 on the downwind, away from the
-                # final (6.7.2), or slow down if traffic follows, rather than turning base early
-                # into the other streams' slots (6.11.8)
+                # final (5-6-2), or slow down if traffic follows, rather than turning base early
+                # into the other streams' slots (5-9-6)
                 if self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs):
                     c.send(out, C.make_360(cs, direction="left"))
                     self.t360[cs] = c.t
@@ -1454,7 +1533,7 @@ class Approach:
             if a["x"] >= xb:
                 v["x_base"] = a["x"]
                 alt = self.intercept_alt(a, "base")
-                alt = max(alt, menu_alt_above(mva_ahead(a["x"], a["y"], BASE_T, a["gs"])))
+                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], BASE_T, a["gs"])))
                 if cs in self.level:
                     c.send(out, C.vector(cs, heading=180))
                 else:
@@ -1467,8 +1546,8 @@ class Approach:
             short = self.pattern_short(a, "base") if a["leg"] != "360" else 0.0
             if a["leg"] != "360" and off > INTERCEPT_OFFSET + 3.0 and (short > 60 or self.join_conflict(a, "base", acs)):
                 # still well ahead of the slot on base: a left 360 (away from the field and the
-                # final, 6.7.2) only for more than ~120 s (it takes ~150 s), else slow down
-                # (180 kts, then 160 kts approach speed, 6.15), instead of joining early (6.11.8)
+                # final, 5-6-2) only for more than ~120 s (it takes ~150 s), else slow down
+                # (180 kts, then 160 kts approach speed, 5-7), instead of joining early (5-9-6)
                 if (short > 120 or self.join_conflict(a, "base", acs)) and self.t360.get(cs, -999) < c.t - 200 \
                         and not self.followed(a, acs) and mva_clear_360(a):
                     c.send(out, C.make_360(cs, direction="left"))
@@ -1479,7 +1558,7 @@ class Approach:
                     self.speed[cs] = (180, "kts")
                     return
                 if self.speed.get(cs, (None,))[0] == 180 and short > 60 and c.perf(a)["vapp"] + 5 <= 160:
-                    c.send(out, C.approach_speed(cs, kts=160))
+                    c.send(out, C.approach_speed(cs, kts=160, until_nm=5))
                     self.speed[cs] = (160, "app")
                     return
             R = (a["gs"] / 3600) / math.radians(2.2)
@@ -1489,9 +1568,9 @@ class Approach:
                 c.send(out, C.cleared_approach(cs, approach="ils", runway="28R", heading=INTERCEPT_MAG, altitude=alt))
                 if a["alt"] > alt + 200 and cs not in self.level:
                     # maintain-until-established holds a higher aircraft level: descend it to the
-                    # intercept altitude so it joins from below the glidepath (6.11.4)
+                    # intercept altitude so it joins from below the glidepath (5-9-1)
                     out.append(C.vector(cs, heading=INTERCEPT_MAG, altitude=alt))
-                out.append(C.approach_speed(cs, kts=180))
+                out.append(C.approach_speed(cs, kts=180, until_nm=6))
                 self.speed[cs] = (180, "app")
                 v["phase"] = "intercept"
                 self.level.pop(cs, None)
@@ -1522,7 +1601,7 @@ class Approach:
 
     def join_conflict(self, a, phase, acs, x_base=None):
         """Traffic for 28L/28R that would be within 3.5 track miles of where this vectored
-        arrival joins the final, at the time it gets there (6.11.8: 3 nm until established)."""
+        arrival joins the final, at the time it gets there (5-9-6: 3 nm until established)."""
         gs = max(a["gs"], 180)
         L, a_join = vector_path(a["x"], a["y"], a["hdg"], gs, phase, x_base)
         T = L / gs * 3600
@@ -1557,7 +1636,7 @@ class Approach:
     def intercept_alt(self, a, phase):
         L, a_join = vector_path(a["x"], a["y"], a["hdg"], a["gs"], phase)
         gs_alt = RWY28R.glide_alt(max(2.0, a_join), RWY28R.gs_angle)
-        return max(2000, min(menu_alt_below(gs_alt - 200), 5000))
+        return max(2000, min(alt_below(gs_alt - 200), 5000))      # below the glideslope at the join (5-9-1)
 
     def handoffs(self, acs, out):
         """6.14: established on final -> tower."""
@@ -1605,7 +1684,7 @@ class Departure:
                 c.send(out, C.vector(cs, altitude=cap))
                 self.cap[cs] = cap
             elif cap is None and cur is not None:
-                c.send(out, C.altitude_at_discretion(cs))
+                c.send(out, C.descend_via(cs))
                 self.cap.pop(cs)
 
     def needed_cap(self, a, acs):
@@ -1619,12 +1698,12 @@ class Departure:
                 continue
             md = closest_approach(a, o, 180)
             if md < 5.5:
-                lim = menu_alt_below(o["alt"] - 1000)
+                lim = alt_below(o["alt"] - 1000)
                 if o["vs"] < -300:
-                    lim = menu_alt_below(min(o["alt"], o.get("alt_assigned") or o["alt"]) - 1000)
+                    lim = alt_below(min(o["alt"], o.get("alt_assigned") or o["alt"]) - 1000)
                 if lim < a["alt"] - 50:
-                    lim = menu_alt_above(a["alt"] - 50)       # never descend a departure
-                lim = max(lim, menu_alt_above(W.mva(a["x"], a["y"])))
+                    lim = alt_above(a["alt"] - 50)       # never descend a departure
+                lim = max(lim, alt_above(max(W.mva(a["x"], a["y"]), mva_ahead(a["x"], a["y"], a["hdg"], a["gs"]))))
                 if best is None or lim < best:
                     best = lim
         return best

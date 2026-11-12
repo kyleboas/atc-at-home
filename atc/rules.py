@@ -1,24 +1,33 @@
-"""Rules monitor for KSFO: checks Ground, Tower, Approach and Departure against the IFATC
-manual (reference/atc-manual-1-to-6.txt), with the multi-runway rules a West Plan needs.
+"""Rules monitor for KSFO: checks Ground, Tower, Approach and Departure against FAA Order
+JO 7110.65 (reference/faa-7110.65.txt), cited by paragraph.
 
 Severity:
-  hard     loss of runway separation (3.1.1, incl. intersecting runways 01L/01R x 28L/28R),
-           crossing a runway against traffic (2.3.2), collision alarm (6.2.4: < 1.5 nm and
-           < 500 ft with a radar-controlled aircraft), a near miss anywhere (< 0.4 nm and
-           < 300 ft), or terrain (6.2.1, NorCal TRACON MVA). Any one fails the run.
-  rule     a procedural rule from the manual, cited by section. Added for KSFO:
-             6.11.8  parallel approaches: lost 1000 ft / 3 nm between aircraft on approach
-                     to 28L and 28R before both are established (6.11.7-6.11.8)
-             wake    in-trail wake turbulence spacing on final (same runway or the closely
-                     spaced parallel behind a heavy/super; FAA JO 7110.65 5-5-4) and
-                     departures behind a heavy/super (5-8-3: 2 / 3 minutes)
-             2.2.2   taxi clearance without a route; a crossing clearance for a runway that
-                     is not the next one on the route (2.2.2 "must have crossed a previous
-                     runway before another runway crossing clearance may be issued")
-             2.3.1   crossing clearance not naming the runway in the direction in use
-             2.2.1   taxi conflicts are resolved with "give way" (or hold short of a taxiway);
-                     "hold position" for traffic only when a collision is imminent (< ~25 s)
-  service  not a rule break, but worse service.
+  hard     loss of runway separation (3-9-6 / 3-10-3 same runway, 3-9-8 / 3-10-4 intersecting
+           runways 01L/01R x 28L/28R), crossing an active runway against traffic (3-1-3),
+           conflict alert (5-14-6: < 1.5 nm and < 500 ft with a radar-controlled aircraft),
+           a near miss anywhere (< 0.4 nm and < 300 ft), terrain (5-6-3, NorCal TRACON MVA),
+           or Mayday fuel (2-1-4, 10-2-5). Any one fails the run.
+  rule     a procedure from the order, cited by paragraph:
+             5-5-4   radar separation 3 nm / 1,000 ft; wake turbulence on final
+             5-9-6   dependent parallel approaches: 1,000 ft / 3 nm until both established
+             5-9-1   join the final approach course no closer than the approach gate (1 nm
+                     outside the FAF; visibility 10, so the 2 nm buffer is not required) and
+                     not above the glideslope
+             5-9-2   intercept angle at most 30 degrees, 20 within 2 nm of the approach gate
+             5-9-4   altitude to maintain until established; approach clearance and transfer
+                     to tower before the approach gate
+             5-9-5   approach separation at the handoff (closure on the traffic ahead)
+             5-6-3   altitude assigned below the MVA; 4-6-4 holding below it
+             5-7-1   speed adjustment inside 5 nm final / the FAF, or in a holding pattern
+             5-7-3   more than 250 kt below 10,000 ft; 5-7-1 a speed the type cannot fly
+             3-7-2   taxi clearance without a route; a crossing clearance for a runway that
+                     is not the next one on the route
+             3-7-1   taxi conflicts (< 150 ft) and aircraft stuck nose to nose
+             3-9-6   departure behind a heavy/super (wake, 2 / 3 minutes)
+             3-10-3  go-around for spacing or an occupied runway; 3-10-5 no landing clearance
+             phraseology  an instruction the simulator cannot parse or that does not apply
+  service  not a rule break, but worse service: transfers of communication (2-1-17), the
+           clearance limit reached without further clearance (4-6-2), lost or stuck aircraft.
 
 Each violation names the position that owns it (GND, TWR, APP, DEP). The monitor sees the
 true world, not the controller's observation.
@@ -30,8 +39,10 @@ from . import procs as P
 from . import world as W
 
 NEAR_MISS_NM, NEAR_MISS_FT = 0.4, 300
-ALARM_NM, ALARM_FT = 1.5, 500             # 6.2.4 red target + audible alarm
-SEP_NM, SEP_FT = 3.0, 1000                # 6.2.2
+ALARM_NM, ALARM_FT = 1.5, 500             # 5-14-6 conflict alert
+SEP_NM, SEP_FT = 3.0, 1000                # 5-5-4 radar separation
+SPEED_ADJ = ("approach_speed", "maintain_speed", "maintain_present_speed", "slowest_practical_speed",
+             "maximum_forward_speed")
 LOC_RANGE = 25.0
 GROUND = ("pushing", "pushed", "taxiing", "holding_short", "clear", "taxi_in")
 
@@ -91,7 +102,7 @@ class Monitor:
         sim = self.sim
         if err:
             self.invalid += 1
-            self.add("rule", "menu", cmd.get("cs") or "?", f"invalid command: {err}", pos=owner(ac))
+            self.add("rule", "phraseology", cmd.get("cs") or "?", f"invalid instruction: {err}", pos=owner(ac))
             return
         n = cmd["cmd"]
         others = self.others(ac)
@@ -99,57 +110,38 @@ class Monitor:
         if n == "pushback_approved":
             for o in others:
                 if o.phase == "pushing" and not o.hold and math.hypot(o.x - ac.x, o.y - ac.y) < 0.045:
-                    self.add("rule", "2.1.3", ac, f"pushback approved while {o.cs} is pushing {math.hypot(o.x - ac.x, o.y - ac.y) * W.FT_NM:.0f} ft away")
+                    self.add("rule", "3-7-1", ac, f"pushback approved while {o.cs} is pushing {math.hypot(o.x - ac.x, o.y - ac.y) * W.FT_NM:.0f} ft away")
                     break
-        if n == "hold_position" and ac.freq == "ground" and ac.phase in ("taxiing", "taxi_in") and ac.gspeed > 2:
-            near = [o for o in others if (o.phase in GROUND or o.phase in ("exiting", "landing_roll")) and not o.airborne
-                    and math.hypot(o.x - ac.x, o.y - ac.y) < 0.3]
-            if near and not any(self.imminent(ac, o) for o in near):
-                self.add("rule", "2.2.1", ac, f"stopped with 'hold position' for {near[0].cs}: use 'give way' "
-                         "(or hold short of a taxiway); hold position only when a collision is imminent", pos="GND")
         if n in ("taxi_to_runway", "taxi_to_parking") and not cmd.get("via"):
-            self.add("rule", "2.2.2", ac, "taxi clearance without a route (drag & taxi is available at KSFO)")
-        if n == "taxi_to_runway" and ac.cat == "prop" and not cmd["contact_tower"]:
-            self.add("rule", "2.2.2", ac, "props get 'taxi to runway, contact tower when ready'")
+            self.add("rule", "3-7-2", ac, "taxi clearance without a route (TAXI VIA ...)")
         if n == "cross_runway":
             rw = cmd["runway"]
-            if rw not in W.IN_USE.values():
-                self.add("rule", "2.3.1", ac, f"cross runway {rw}: refer to the runway in the direction in use "
-                         f"({W.IN_USE.get(W.RUNWAYS[rw].pavement, '?')})")
             nxt = sim.next_crossing(ac)
-            if nxt is not None and nxt != rw:
-                self.add("rule", "2.2.2", ac, f"crossing clearance for runway {rw} before runway {nxt} was crossed")
-        if n == "slowest_practical_speed" and rem is not None and rem <= 4.0:
-            self.add("rule", "3.1.4", ac, f"slowest practical speed {rem:.1f} nm from touchdown (not inside 4 nm)")
-        if n == "cleared_takeoff" and cmd["immediate"]:
-            close = [o for o in others if o.airborne and o.intent == "arrival" and o.runway in W.ARR_RUNWAYS
-                     and (F.remaining(o) or 99) <= 3.0]
-            if not close:
-                self.add("rule", "3.2.7", ac, "immediate takeoff with no arrival inside ~3 nm final")
-        if n in ("freq_change_approved", "contact_frequency") and ac.intent == "departure" and ac.airborne \
-                and ac.freq == "tower":
-            rwy = W.RUNWAYS[ac.runway]
-            if rwy.u((ac.x, ac.y)) < rwy.len_nm + 0.5:
-                self.add("rule", "3.2.11", ac, "frequency change during a critical phase (before 1/2 nm off the departure end)")
-        if n == "exit_runway" and ac.gs > 70:
-            self.add("rule", "3.5.1", ac, f"exit runway issued at {ac.gs:.0f} kts (below ~70)")
+            if nxt is not None and nxt != rw and W.RUNWAYS[nxt].pavement != W.RUNWAYS[rw].pavement:
+                self.add("rule", "3-7-2", ac, f"crossing clearance for runway {rw} before runway {nxt} was crossed")
+        if n in SPEED_ADJ and ac.airborne:
+            if rem is not None and ac.intent == "arrival" and ac.runway in P.APPROACH_IDS \
+                    and rem <= max(5.0, self.faf_nm(ac.runway)):
+                self.add("rule", "5-7-1", ac, f"speed adjustment {rem:.1f} nm from the runway (not inside 5 nm or the FAF)")
+            elif ac.holdp is not None:
+                self.add("rule", "5-7-1", ac, "speed adjustment in a holding pattern")
         # ---- radar ----
         if n == "vector" and cmd["altitude"] is not None:
             for (x, y) in self.projected(ac, cmd):
                 if cmd["altitude"] < W.mva(x, y):
-                    self.add("rule", "6.3.2", ac, f"assigned {cmd['altitude']} ft where the MVA is {W.mva(x, y)} ft")
+                    self.add("rule", "5-6-3", ac, f"assigned {cmd['altitude']} ft where the MVA is {W.mva(x, y)} ft")
                     break
         if n in ("hold_present_position", "hold_at_fix"):
             fx = W.K.FIXES.get(cmd.get("fix")) if n == "hold_at_fix" else (ac.x, ac.y)
             if fx and cmd["altitude"] < W.mva(*fx):
-                self.add("rule", "6.3.2", ac, f"hold at {cmd['altitude']} ft where the MVA is {W.mva(*fx)} ft")
+                self.add("rule", "4-6-4", ac, f"hold at {cmd['altitude']} ft where the MVA is {W.mva(*fx)} ft")
         if n == "cleared_approach":
             self.check_intercept(ac, cmd)
-        if n == "maintain_speed":
+        if n in ("maintain_speed", "approach_speed"):
             if cmd["kts"] < ac.perf["vapp"]:
-                self.add("rule", "6.15", ac, f"{cmd['kts']} kts is below what a {ac.type} can fly")
+                self.add("rule", "5-7-1", ac, f"{cmd['kts']} kts is below what a {ac.type} can fly")
             if cmd["kts"] > 250 and ac.alt < 10000:
-                self.add("rule", "6.15", ac, "more than 250 kts below 10,000 ft")
+                self.add("rule", "5-7-3", ac, "more than 250 kts below 10,000 ft")
         if n in ("contact_frequency", "freq_change_approved") and ac.freq == "approach" and ac.airborne \
                 and (cmd.get("facility") or sim.next_facility(ac)) == "tower":
             self.check_handoff(ac)
@@ -159,20 +151,29 @@ class Monitor:
         d = ac.gs / 60 * minutes
         return [(ac.x + math.sin(h) * d * k / 4, ac.y + math.cos(h) * d * k / 4) for k in range(5)]
 
+    @staticmethod
+    def faf_nm(rwy_ident, approach="ils"):
+        pid = P.APPROACH_IDS[rwy_ident].get(approach) or next(iter(P.APPROACH_IDS[rwy_ident].values()))
+        f = P.faf(pid)
+        return W.RUNWAYS[rwy_ident].to_thr(*f["pos"])[0] if f else 5.0
+
+    def gate_nm(self, rwy_ident, approach="ils"):
+        """Approach gate: 1 nm outside the FAF, at least 5 nm from the threshold (7110.65 glossary)."""
+        return max(5.0, self.faf_nm(rwy_ident, approach) + 1.0)
+
     def check_intercept(self, ac, cmd):
-        """6.11.3-6.11.5 (ILS) and 6.10.2/6.10.4 (GPS / RNP): an intercept heading ~30 degrees
-        that converges between 2 and 25 nm, or a published join on the flight plan; for the ILS
-        always an altitude until established, below the glidepath where it joins."""
+        """5-9-1 / 5-9-2 / 5-9-4: an intercept heading that converges no closer than the approach
+        gate, at most 30 degrees (20 within 2 nm of the gate), or a published join on the flight
+        plan; for the ILS an altitude until established, not above the glideslope where it joins."""
         rwy = W.RUNWAYS[cmd["runway"]]
         pid = P.APPROACH_IDS[cmd["runway"]][cmd["approach"]]
         ils = cmd["approach"] == "ils"
         if ils and cmd["altitude"] is None:
-            self.add("rule", "6.11.5", ac, "ILS clearance without an altitude to maintain until established")
+            self.add("rule", "5-9-4", ac, "ILS clearance without an altitude to maintain until established")
         hdg = cmd["heading"]
         if hdg is None:
             if not self.on_published_join(ac, pid):
-                sec = "6.11.5" if ils else "6.10.4"
-                self.add("rule", sec, ac, f"{cmd['approach'].upper()} clearance without an intercept heading while not "
+                self.add("rule", "5-9-4", ac, f"{cmd['approach'].upper()} clearance without an intercept heading while not "
                          "on a STAR / transition / hold that joins the approach")
                 return
             fix, pos, _ = P.intermediate_fix(pid)
@@ -181,22 +182,24 @@ class Monitor:
             h = W.mag2true(hdg)
             crs = rwy.loc_course
             angle = abs(W.ang_diff(crs, h))
-            if angle > 45 or angle <= 10:
-                self.add("rule", "6.11.3", ac, f"intercept heading {hdg:03d} is {angle:.0f} deg off the final course "
-                         "(as close to 30 as possible, never 10 or less)")
             p = P.intersect_ray((ac.x, ac.y), h, rwy.thr, crs)
             if p is None:
-                self.add("rule", "6.11.3", ac, f"heading {hdg:03d} does not converge on the final course")
+                self.add("rule", "5-9-2", ac, f"heading {hdg:03d} does not converge on the final course")
                 return
             join = rwy.to_thr(*p)[0]
-            if not (2.0 < join < LOC_RANGE):
-                self.add("rule", "6.11.3", ac, f"heading {hdg:03d} joins the final course {join:.1f} nm out, "
-                         "not between 2 and 25 nm")
+            gate = self.gate_nm(cmd["runway"], cmd["approach"])
+            if not (gate - 0.1 <= join < LOC_RANGE):
+                self.add("rule", "5-9-1", ac, f"heading {hdg:03d} joins the final course {join:.1f} nm out, "
+                         f"inside the approach gate ({gate:.1f} nm) or beyond the localizer")
                 return
+            limit = 20 if join < gate + 2 else 30
+            if angle > limit + 0.5:
+                self.add("rule", "5-9-2", ac, f"intercept heading {hdg:03d} is {angle:.0f} deg off the final course "
+                         f"(at most {limit} where it joins, {join:.1f} nm out)")
         if cmd["altitude"] is not None:
             gs_alt = rwy.glide_alt(join, P.glide_angle(pid))
             if cmd["altitude"] > gs_alt + 50:
-                self.add("rule", "6.11.4", ac, f"{cmd['altitude']} ft is above the glidepath ({gs_alt:.0f} ft) where "
+                self.add("rule", "5-9-1", ac, f"{cmd['altitude']} ft is above the glidepath ({gs_alt:.0f} ft) where "
                          f"it joins {join:.1f} nm out; intercept from below")
 
     def on_published_join(self, ac, pid):
@@ -220,11 +223,11 @@ class Monitor:
         return bool(P.transition_for(pid, route[-1].get("fix")))
 
     def check_handoff(self, ac):
-        """6.14: established on the intended path, with acceptable closure."""
+        """5-9-4 / 5-9-5: cleared for the approach, established, with acceptable closure."""
         if ac.intent == "arrival" and ac.appr_cleared is None:
-            self.add("rule", "6.14.1", ac, "IFR arrival handed to tower without an approach clearance")
+            self.add("rule", "5-9-4", ac, "IFR arrival handed to tower without an approach clearance")
         elif ac.intent == "arrival" and not ac.established:
-            self.add("rule", "6.14.1", ac, "handed to tower before established on the final approach course")
+            self.add("rule", "5-9-4", ac, "handed to tower before established on the final approach course")
         rem = F.remaining(ac)
         if rem is None:
             return
@@ -233,7 +236,7 @@ class Monitor:
                 continue
             ro = F.remaining(o)
             if ro is not None and ro < rem and rem - ro < 4 and ac.gs > o.gs + 40:
-                self.add("rule", "6.14.3", ac, f"closing on {o.cs} ({ac.gs:.0f} vs {o.gs:.0f} kts GS, {rem - ro:.1f} nm) at handoff")
+                self.add("rule", "5-9-5", ac, f"closing on {o.cs} ({ac.gs:.0f} vs {o.gs:.0f} kts GS, {rem - ro:.1f} nm) at handoff")
                 return
 
     # ------------------------------------------------------------------ runway geometry
@@ -264,21 +267,21 @@ class Monitor:
             for o, orw in self.runway_users(ac):
                 if same_or_cspr(orw, rw):
                     if o.phase == "rolling":
-                        self.add("hard", "3.1.1", ac, f"dep/dep: began takeoff roll on {rw} before {o.cs} ({orw}) was airborne", pos="TWR")
+                        self.add("hard", "3-9-6", ac, f"dep/dep: began takeoff roll on {rw} before {o.cs} ({orw}) was airborne", pos="TWR")
                     elif orw == rw and o.phase != "airborne":
-                        self.add("hard", "3.1.1", ac, f"arr/dep: began takeoff roll on {rw} with {o.cs} still on the runway ({o.phase})", pos="TWR")
+                        self.add("hard", "3-9-6", ac, f"arr/dep: began takeoff roll on {rw} with {o.cs} still on the runway ({o.phase})", pos="TWR")
                 elif (rw, orw) in W.INTERSECTIONS and self.before_point(o, orw, W.INTERSECTIONS[(orw, rw)]):
-                    self.add("hard", "3.1.1", ac, f"intersecting: began takeoff roll on {rw} before {o.cs} on {orw} "
+                    self.add("hard", "3-9-8", ac, f"intersecting: began takeoff roll on {rw} before {o.cs} on {orw} "
                              f"({o.phase}) was beyond the intersection", pos="TWR")
             for o in self.others(ac):
                 if rw in o.zone and o.phase in GROUND + ("lining_up", "exiting"):
-                    self.add("hard", "3.1.1", ac, f"began takeoff roll on {rw} with {o.cs} in the runway strip ({o.phase})", pos="TWR")
+                    self.add("hard", "3-9-6", ac, f"began takeoff roll on {rw} with {o.cs} in the runway strip ({o.phase})", pos="TWR")
             for t, drw, wake, cs in reversed(sim.departed):
                 need = W.DEP_WAKE_S.get(wake)
                 if need and cs != ac.cs and same_or_cspr(drw, rw) and sim.t - t < need and ac.wake not in ("J",) \
                         and not (wake == "H" and ac.wake == "H"):
-                    self.add("rule", "wake", ac, f"departure {sim.t - t} s behind {W.WAKE_NAMES[wake]} {cs} from {drw} "
-                             f"(needs {need // 60} min, 7110.65 5-8-3)", pos="TWR")
+                    self.add("rule", "3-9-6", ac, f"wake: departure {sim.t - t} s behind {W.WAKE_NAMES[wake]} {cs} from {drw} "
+                             f"(needs {need // 60} min)", pos="TWR")
                     break
         elif ev == "threshold":
             rw = ac.runway
@@ -286,10 +289,10 @@ class Monitor:
                 if rw in o.zone and o.phase not in ("airborne", "pending"):
                     if not (o.phase == "exiting" and getattr(o, "vacated", False)):
                         kind = {"landing_roll": "arr/arr", "exiting": "arr/arr", "rolling": "dep/arr"}.get(o.phase, "occupied")
-                        self.add("hard", "3.1.1", ac, f"{kind}: crossed the {rw} threshold with {o.cs} on the runway ({o.phase})", pos="TWR")
+                        self.add("hard", "3-10-3", ac, f"{kind}: crossed the {rw} threshold with {o.cs} on the runway ({o.phase})", pos="TWR")
             for o, orw in self.runway_users(ac):
                 if orw != rw and (rw, orw) in W.INTERSECTIONS and self.before_point(o, orw, W.INTERSECTIONS[(orw, rw)]):
-                    self.add("hard", "3.1.1", ac, f"intersecting: crossed the {rw} threshold before {o.cs} on {orw} "
+                    self.add("hard", "3-10-4", ac, f"intersecting: crossed the {rw} threshold before {o.cs} on {orw} "
                              f"({o.phase}) was beyond the intersection", pos="TWR")
         elif ev == "cross_enter":
             rw = kw.get("rwy")
@@ -299,48 +302,48 @@ class Monitor:
                 if o.runway != rw:
                     continue
                 if o.phase == "rolling" and R.u((o.x, o.y)) < u_x + W.BEYOND_NM:
-                    self.add("hard", "2.3.2", ac, f"entered runway {rw} to cross while {o.cs} was rolling toward the crossing point")
+                    self.add("hard", "3-1-3", ac, f"entered runway {rw} to cross while {o.cs} was rolling toward the crossing point")
                 elif o.phase in ("landing_roll", "rto") and R.u((o.x, o.y)) < u_x + W.BEYOND_NM \
                         and not (o.target_exit and o.target_exit["u"] < u_x - 0.05):
-                    self.add("hard", "2.3.2", ac, f"entered runway {rw} to cross while {o.cs} was landing toward the crossing point")
+                    self.add("hard", "3-1-3", ac, f"entered runway {rw} to cross while {o.cs} was landing toward the crossing point")
                 elif o.phase == "airborne" and o.intent == "departure" and o.alt < W.ELEV + 300 \
                         and R.u((o.x, o.y)) < u_x + W.BEYOND_NM:
-                    self.add("hard", "2.3.2", ac, f"entered runway {rw} to cross under {o.cs} lifting off toward it")
+                    self.add("hard", "3-1-3", ac, f"entered runway {rw} to cross under {o.cs} lifting off toward it")
         elif ev == "established":
             angle = kw.get("angle", 30)
             rwy = ac.final_rwy or W.RUNWAYS[ac.runway]
             a_thr = rwy.to_thr(ac.x, ac.y)[0]
             gs_alt = rwy.glide_alt(a_thr, ac.glide_angle)
             if ac.alt > gs_alt + 300:
-                self.add("rule", "6.11.4", ac, f"established {ac.alt - gs_alt:.0f} ft above the glidepath", pos="APP")
-            if angle > 45:
-                self.add("rule", "6.11.3", ac, f"joined the final approach course at {angle:.0f} degrees", pos="APP")
+                self.add("rule", "5-9-1", ac, f"established {ac.alt - gs_alt:.0f} ft above the glidepath", pos="APP")
+            if angle > 35:
+                self.add("rule", "5-9-2", ac, f"joined the final approach course at {angle:.0f} degrees", pos="APP")
         elif ev == "ground_blocked":
             o = kw.get("other")
-            self.add("rule", "2.2.1", ac, f"stuck nose to nose with {o.cs if o else '?'} on the taxiways for 90 s "
-                     "(use give way / routes that don't conflict)", pos="GND")
+            self.add("rule", "3-7-1", ac, f"stuck nose to nose with {o.cs if o else '?'} on the taxiways for 90 s "
+                     "(use follow / hold short / routes that don't conflict)", pos="GND")
         elif ev == "missed_intercept":
-            self.add("rule", "6.11.3", ac, "flew through the final approach course without capturing it", pos="APP")
+            self.add("rule", "5-9-2", ac, "flew through the final approach course without capturing it", pos="APP")
         elif ev == "no_clearance":
-            self.add("rule", "3.6.3", ac, "short final with no landing clearance (pilot went around)", pos="TWR")
+            self.add("rule", "3-10-5", ac, "short final with no landing clearance (pilot went around)", pos="TWR")
         elif ev == "not_established":
-            self.add("rule", "6.14.1", ac, "reached short final not established on the approach (pilot went around)", pos="APP")
+            self.add("rule", "5-9-4", ac, "reached short final not established on the approach (pilot went around)", pos="APP")
         elif ev == "unstable":
-            self.add("rule", "6.11.4", ac, f"unstable on short final ({kw.get('high', 0):.0f} ft above the glidepath; "
+            self.add("rule", "5-9-1", ac, f"unstable on short final ({kw.get('high', 0):.0f} ft above the glidepath; "
                      "pilot went around)", pos="APP")
         elif ev == "pilot_ga_traffic":
-            self.add("rule", "3.1.3", ac, "pilot went around for traffic ahead on final (spacing)",
+            self.add("rule", "3-10-3", ac, "pilot went around for traffic ahead on final (spacing)",
                      pos="TWR" if ac.freq == "tower" else "APP")
         elif ev == "pilot_ga_occupied":
-            self.add("rule", "3.1.3", ac, "pilot went around for an occupied runway", pos="TWR")
+            self.add("rule", "3-10-3", ac, "pilot went around for an occupied runway", pos="TWR")
         elif ev == "left_tower_unhanded":
-            self.add("service", "3.2.11", ac, "departure left tower airspace without a frequency change", pos="TWR")
+            self.add("service", "2-1-17", ac, "departure left tower airspace without a frequency change", pos="TWR")
         elif ev == "left_airspace_unhanded":
-            self.add("service", "6.4", ac, "departure left the airspace without a handoff to center", pos="DEP")
+            self.add("service", "2-1-17", ac, "departure left the airspace without a handoff to center", pos="DEP")
         elif ev == "missed_not_handed":
-            self.add("service", "3.5.4", ac, "missed approach not handed back to approach", pos="TWR")
+            self.add("service", "2-1-17", ac, "missed approach not handed back to approach", pos="TWR")
         elif ev == "clearance_limit":
-            self.add("service", "6.9.4", ac, "reached the end of its cleared route without an approach clearance (holding)",
+            self.add("service", "4-6-2", ac, "reached the end of its cleared route without an approach clearance (holding)",
                      pos="APP")
         elif ev == "lost":
             self.add("service", "lost", ac, "left the airspace while still inbound", pos="APP")
@@ -355,7 +358,7 @@ class Monitor:
             if a.freq in W.RADAR and vectored and not a.established and not climbing_out and not a.missed:
                 need = W.mva(a.x, a.y)
                 if a.alt < need - 100 and math.hypot(a.x, a.y) > 5:
-                    self.add("hard", "6.2.1", a, f"vectored at {a.alt:.0f} ft where the MVA is {need} ft",
+                    self.add("hard", "5-6-3", a, f"vectored at {a.alt:.0f} ft where the MVA is {need} ft",
                              key=("terrain", a.cs, sim.t // 120))
         for i in range(len(air)):
             a = air[i]
@@ -378,15 +381,15 @@ class Monitor:
                     self.add("hard", "AIR", a, f"near miss with {b.cs}: {lat:.2f} nm, {vert:.0f} ft",
                              key=("near", pair, sim.t // 120), pos=owner(resp))
                 elif both_est:
-                    continue                        # 6.11.7: established on parallel / same final (wake checked below)
+                    continue                        # 5-9-6: established on parallel / same final (wake checked below)
                 elif radar and lat < ALARM_NM and vert < ALARM_FT:
-                    self.add("hard", "6.2.4", resp, f"collision alarm with {(b if resp is a else a).cs}: {lat:.2f} nm, {vert:.0f} ft",
+                    self.add("hard", "5-14-6", resp, f"conflict alert with {(b if resp is a else a).cs}: {lat:.2f} nm, {vert:.0f} ft",
                              key=("alarm", pair, sim.t // 120))
                 elif radar and a.ifr and b.ifr:
                     self.sep_loss_s += 1
                     par = (a.intent == b.intent == "arrival" and a.appr_cleared and b.appr_cleared
                            and W.CSPR.get(a.runway) == b.runway)
-                    rule = "6.11.8" if par else "6.2.2"
+                    rule = "5-9-6" if par else "5-5-4"
                     what = "parallel approaches not separated until both established" if par else "lost IFR separation"
                     self.add("rule", rule, resp, f"{what} with {(b if resp is a else a).cs}: {lat:.1f} nm, {vert:.0f} ft",
                              key=("sep", pair, sim.t // 300))
@@ -404,17 +407,11 @@ class Monitor:
                 if abs(a.x - b.x) < 0.025 and abs(a.y - b.y) < 0.025 and math.hypot(a.x - b.x, a.y - b.y) < 0.025 \
                         and (a.gspeed > 0 or b.gspeed > 0):
                     pair = tuple(sorted((a.cs, b.cs)))
-                    self.add("rule", "2.2.1", a, f"taxi conflict with {b.cs} (< 150 ft)", key=("gnd", pair, sim.t // 120),
+                    self.add("rule", "3-7-1", a, f"taxi conflict with {b.cs} (< 150 ft)", key=("gnd", pair, sim.t // 120),
                              pos="GND")
         for r in sim.requests:
             if r["answered"] is None:
                 self.req_wait_s += 1
-                if r["kind"] == "ready_for_departure" and sim.t - r["t"] > 30:
-                    self.add("rule", "3.2.1", r["cs"], "ready for departure left unanswered >30 s (use hold short)",
-                             key=("3.2.1", r["id"]), pos="TWR")
-                if r["kind"] == "check_in" and sim.t - r["t"] > 30:
-                    pos = "DEP" if r["freq"] == "departure" else "APP"
-                    self.add("rule", "6.4.4", r["cs"], "check-in not answered within 30 s", key=("6.4.4", r["id"]), pos=pos)
 
     def wake_on_final(self):
         """Wake turbulence / in-trail spacing between aircraft established on final (7110.65 5-5-4):
@@ -438,8 +435,8 @@ class Monitor:
                 if a.runway == b.runway:
                     need = max(need, 2.5)
                 if need and gap < need - 0.05:
-                    self.add("rule", "wake", b, f"{gap:.1f} nm behind {W.WAKE_NAMES[a.wake]} {a.cs} on final "
-                             f"({a.runway}/{b.runway}, needs {need:.1f} nm, 7110.65 5-5-4)",
+                    self.add("rule", "5-5-4", b, f"wake: {gap:.1f} nm behind {W.WAKE_NAMES[a.wake]} {a.cs} on final "
+                             f"({a.runway}/{b.runway}, needs {need:.1f} nm)",
                              key=("wake", a.cs, b.cs), pos="APP" if b.freq == "approach" else "TWR")
 
     def finish(self):

@@ -5,14 +5,15 @@ tools/ci_score.py (the official check on every pull request).
 
 A candidate beats the best only if ALL of these hold:
   - hard violations did not increase (separation, collision alarms, near misses, terrain);
-  - manual intercept / handoff / taxi violations (6.11, 6.14, 2.2) did not increase;
+  - approach and taxi violations of FAA JO 7110.65 (5-9 radar approaches: intercepts,
+    approach clearance, transfer to tower; 3-7 taxi and ground movement) did not increase;
   - cost went down.
 """
-MANUAL = ("6.11", "6.14", "2.2")
+MANUAL = ("5-9", "3-7")  # FAA JO 7110.65 paragraph prefixes
 
 REASONS = {
     "hard": "more hard violations (separation, collision alarms, near misses, terrain) than the current best",
-    "manual": "more manual intercept / handoff / taxi violations (6.11, 6.14, 2.2) than the current best",
+    "manual": "more approach / taxi violations (FAA 5-9, 3-7) than the current best",
     "cost": "cost is not lower than the current best",
 }
 

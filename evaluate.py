@@ -6,9 +6,11 @@
 
 Lower cost is better. Cost is the average over scenarios of each scenario's cost per 40 minutes, so
 the 3-hour session (seed 12) counts like one train scenario at its rate, not 4.5 of them.
-Any hard violation (loss of runway separation per manual 3.1.1 incl.
-intersecting runways, a crossing against traffic per 2.3.2, a collision alarm per 6.2.4, an
-airborne near miss, or terrain per 6.2.1) marks the run FAIL regardless of cost.
+Rules follow FAA Order JO 7110.65. Any hard violation (runway separation per 3-9-6, 3-9-8,
+3-10-3 and 3-10-4 incl. intersecting runways, a runway crossing per 3-1-3, radar or wake
+separation per 5-5-4 / 5-9-6, a conflict alert per 5-14-6, an airborne near miss, terrain per
+5-6-3, or a Mayday fuel aircraft neither worked in nor diverted per 2-1-4 / 10-2-5) marks the
+run FAIL regardless of cost. A diversion counts as an hour of arrival delay.
 """
 import argparse
 import hashlib
@@ -30,6 +32,7 @@ FROZEN = ["atc/__init__.py", "atc/world.py", "atc/procs.py", "atc/flight.py", "a
           "ksfo/data/airport.json", "ksfo/data/procedures.json", "ksfo/data/fixes.json", "ksfo/data/holds.json",
           "ksfo/data/surface.json", "ksfo/data/mva.json"]
 WEIGHTS = {"hard": 100, "rule": 10, "service": 2, "go_around": 3}
+DIVERT_DELAY_S = 3600
 SESSION_S = 40 * 60     # cost is reported per 40-minute session (the length of a train scenario)
 
 
@@ -69,6 +72,9 @@ def metrics(sim):
                     if a.m["t_push_ok"] is not None and a.m["t_push_req"] is not None)
     arr_delay = sum(max(-0.5 * a.m["nominal"], a.m["t_landed"] - a.m["t_spawn"] - a.m["nominal"]) for a in acs
                     if a.intent == "arrival" and a.m["t_landed"] is not None)
+    # a diversion (6.8) strands the flight at Oakland: charged as an hour of arrival delay
+    diverted = sum(1 for a in acs if a.m["t_diverted"] is not None)
+    arr_delay += DIVERT_DELAY_S * diverted
     level_s = sum(a.m["level_s"] for a in acs if a.intent == "departure")
     cross_wait = sum(a.m["cross_wait_s"] for a in acs)
     go_arounds = sum(a.m["go_arounds"] for a in acs)
@@ -88,6 +94,7 @@ def metrics(sim):
             "gdp_delay_min": round(sum(a.spec.get("edct_s", 0) for a in acs) / 60, 2),
             "fuel_minimum": sum(1 for a in acs if a.m["fuel_state"] == "minimum"),
             "fuel_emergency": sum(1 for a in acs if a.m["fuel_state"] == "emergency"),
+            "diverted": diverted,
             "alerts": mon.alerts, "movements": movements, "controller_errors": sim.controller_errors,
             "sim_seconds": sim.t}
 
@@ -132,7 +139,7 @@ def main():
         "movements": tot("movements"), "controller_errors": tot("controller_errors"),
         "dep_level_min": round(tot("dep_level_min") / n, 2),
         "gdp_delay_min": round(tot("gdp_delay_min") / n, 2),
-        "fuel_minimum": tot("fuel_minimum"), "fuel_emergency": tot("fuel_emergency"),
+        "fuel_minimum": tot("fuel_minimum"), "fuel_emergency": tot("fuel_emergency"), "diverted": tot("diverted"),
         "violations_by_position": dict(sorted(by_pos.items())),
         "violations_by_rule": dict(sorted(by_rule.items())), "seconds": round(time.time() - t0, 1),
     }
