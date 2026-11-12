@@ -24,6 +24,7 @@ jobs:
             const fs = require('fs');
             const pr = parseInt(fs.readFileSync('pr_number.txt', 'utf8').trim(), 10);
             if (!Number.isInteger(pr) || pr <= 0) return;
+            if (fs.existsSync('skipped.txt')) return;           // no controller change (an owner pull request): nothing to report
             let r = null;
             try { r = JSON.parse(fs.readFileSync('result.json', 'utf8')); } catch (e) {}
             const n = v => (typeof v === 'number' && isFinite(v)) ? String(v) : '–';

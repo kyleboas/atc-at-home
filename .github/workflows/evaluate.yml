@@ -1,6 +1,9 @@
 # Scores every pull request on the training scenarios. Runs the submitted code with a
 # read-only token and no secrets (pull_request, not pull_request_target), so fork code
 # cannot write to the repo or read anything private.
+#
+# Pull requests opened by the repository owner may change any file (tooling, the replay viewer,
+# docs); they are scored only when they change controller.py.
 name: evaluate
 on:
   pull_request:
@@ -19,6 +22,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Submissions may only change controller.py
+        if: github.event.pull_request.user.login != github.repository_owner
         run: |
           changed=$(git diff --name-only "origin/${GITHUB_BASE_REF}"...HEAD)
           echo "$changed"
@@ -26,9 +30,20 @@ jobs:
           if [ -n "$bad" ]; then
             echo "::error::A submission may only change controller.py. Also changed:"; echo "$bad"; exit 1
           fi
+      - name: Does it change controller.py?
+        id: changes
+        run: |
+          if git diff --name-only "origin/${GITHUB_BASE_REF}"...HEAD | grep -qx 'controller.py'; then
+            echo "controller=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "controller=false" >> "$GITHUB_OUTPUT"
+            echo "No change to controller.py: nothing to score." | tee -a "$GITHUB_STEP_SUMMARY" > skipped.txt
+          fi
       - name: Controller uses only what a controller may (tools/ci_guard.py)
+        if: steps.changes.outputs.controller == 'true'
         run: python tools/ci_guard.py controller.py
       - name: Score on the training scenarios
+        if: steps.changes.outputs.controller == 'true'
         run: python tools/ci_score.py --out result.json --summary "$GITHUB_STEP_SUMMARY"
       - name: Record the pull request number for the comment job
         if: always()
@@ -40,3 +55,4 @@ jobs:
           path: |
             result.json
             pr_number.txt
+            skipped.txt
