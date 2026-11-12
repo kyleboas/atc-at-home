@@ -22,6 +22,12 @@ KEYS = ("cost", "hard", "rule", "service", "go_arounds", "delay_min_per_scenario
         "controller_errors", "violations_by_position", "violations_by_rule")
 
 
+def rules_hash():
+    """Fingerprint of the frozen simulator + evaluator. Scores are only comparable within one."""
+    import hashlib
+    return hashlib.sha256(open(os.path.join(HERE, "FROZEN.sha256"), "rb").read()).hexdigest()[:12]
+
+
 def evaluate():
     out = subprocess.run([sys.executable, "evaluate.py", "--split", "train"], cwd=HERE, capture_output=True, text=True)
     for line in out.stdout.splitlines():
@@ -42,6 +48,9 @@ def main():
     args = ap.parse_args()
 
     best = json.load(open(BEST)) if os.path.exists(BEST) else None
+    rh = rules_hash()
+    if best is not None and best.get("rules") != rh and args.update_leaderboard:
+        best = None          # the simulator or rules changed on main: this commit is the new baseline
     s = evaluate()
     res = {k: s.get(k) for k in KEYS}
     res["manual"] = manual(res)
@@ -65,12 +74,12 @@ def main():
 
     if args.update_leaderboard:
         os.makedirs(os.path.dirname(HISTORY), exist_ok=True)
-        row = {**res, "commit": args.commit, "author": args.author, "note": args.note, "t": time.time(),
+        row = {**res, "rules": rh, "commit": args.commit, "author": args.author, "note": args.note, "t": time.time(),
                "status": "baseline" if best is None else ("kept" if beats else "not better")}
         row.pop("best", None)
         with open(HISTORY, "a") as f:
             f.write(json.dumps(row) + "\n")
-        if beats:
+        if beats or best is None:
             json.dump({k: row[k] for k in row if k not in ("beats_best", "fail_reasons")}, open(BEST, "w"), indent=1)
         return 0
     return 0 if beats else 1
