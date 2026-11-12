@@ -82,6 +82,8 @@ def metrics(sim):
             "delay_min": round(delay_min, 2), "dep_delay_min": round(dep_delay / 60, 2),
             "arr_delay_min": round(arr_delay / 60, 2), "push_hold_min": round(push_hold / 60, 2),
             "request_wait_min": round(mon.req_wait_s / 60, 2), "cross_wait_min": round(cross_wait / 60, 2),
+            "fuel_minimum": sum(1 for a in acs if a.m["fuel_state"] == "minimum"),
+            "fuel_emergency": sum(1 for a in acs if a.m["fuel_state"] == "emergency"),
             "alerts": mon.alerts, "movements": movements, "controller_errors": sim.controller_errors,
             "sim_seconds": sim.t}
 
@@ -123,6 +125,7 @@ def main():
         "dep_delay_min": round(tot("dep_delay_min") / n, 2), "arr_delay_min": round(tot("arr_delay_min") / n, 2),
         "movements": tot("movements"), "controller_errors": tot("controller_errors"),
         "dep_level_min": round(tot("dep_level_min") / n, 2),
+        "fuel_minimum": tot("fuel_minimum"), "fuel_emergency": tot("fuel_emergency"),
         "violations_by_position": dict(sorted(by_pos.items())),
         "violations_by_rule": dict(sorted(by_rule.items())), "seconds": round(time.time() - t0, 1),
     }
