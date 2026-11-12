@@ -28,7 +28,7 @@ APPROACH_SPEEDS = {160: 4, 170: 5, 180: 6}
 FACILITIES = ("ground", "tower", "approach", "departure", "center")
 APPROACHES = ("ils", "gps", "rnav")
 RUNWAYS = tuple(sorted(W.RUNWAYS))
-GO_AROUND_THEN = ("runway_heading",)
+GO_AROUND_THEN = ("runway_heading", "left_traffic", "right_traffic")
 FOLLOW = ("final", "left_base", "right_base", "left_downwind", "right_downwind")
 
 SPEC = {
@@ -60,8 +60,9 @@ SPEC = {
                         "Cleared to land > Number 1 > Runway [XX] | Number N > Traffic to follow is on final|..."),
     "sequence": ((T,), ["number", "follow"], {}, "Sequencing > Number N > Traffic to follow is on final|base|downwind"),
     "cancel_landing_clearance": ((T,), [], {}, "Pattern instructions > Cancel landing clearance"),
-    "go_around": ((T,), [], {"then": "runway_heading"},
-                  "Go around > fly runway heading (3.5.4; the menu's make left/right traffic is pattern work, not modelled)"),
+    "go_around": ((T,), [], {"then": "runway_heading", "runway": None},
+                  "Go around > Make left|right traffic > Runway [XX] (a 1,500 ft circuit) | fly runway heading (3.5.4). "
+                  "Approach is open, so either way Tower hands the aircraft to Approach (3.5.4)"),
     # ---- speed (tower + radar) ----
     "approach_speed": ((T, R), ["kts"], {}, "Request speed > Approach speed > 160/170/180 kts until 4/5/6 mile final"),
     "speed_at_discretion": ((T, R), [], {}, "Request speed > Speed at your discretion"),
@@ -150,7 +151,7 @@ def normalize(cmd):
         ("side", lambda v: v in ("left", "right", "any"), "side must be left|right|any"),
         ("expedite", lambda v: v in (None, False, True, "final"), "expedite must be None|True|'final'"),
         ("mode", lambda v: v in (None, "or_greater", "or_below"), "mode must be None|or_greater|or_below"),
-        ("runway", lambda v: v in RUNWAYS or (name == "give_way" and v is None), f"runway must be one of {RUNWAYS}"),
+        ("runway", lambda v: v in RUNWAYS or (name in ("give_way", "go_around") and v is None), f"runway must be one of {RUNWAYS}"),
         ("expect_runway", lambda v: v is None or v in RUNWAYS, "expect_runway must be a runway"),
         ("approach", lambda v: v in APPROACHES, "approach must be ils|gps|rnav"),
         ("fix", lambda v: isinstance(v, str), "fix must be a fix name"),
@@ -159,7 +160,9 @@ def normalize(cmd):
         if k in out and not ok(out[k]):
             return cmd, msg
     if name == "go_around" and out["then"] not in GO_AROUND_THEN:
-        return cmd, "go_around then must be runway_heading"
+        return cmd, "go_around then must be runway_heading|left_traffic|right_traffic"
+    if name == "go_around" and (out["then"] == "runway_heading") != (out["runway"] is None):
+        return cmd, "go around: make left|right traffic needs the runway [XX]; fly runway heading takes none"
     if name == "give_way" and (out["to"] == "exiting") != (out["runway"] is not None):
         return cmd, "give way: 'exiting' needs the runway [XX]; left|right|ahead take no runway"
     if name == "cleared_to_land" and out["number"] > 1 and out["follow"] is None:
@@ -268,7 +271,9 @@ def render(cmd, ac=None, leader=None):
     if n in simple:
         return f"{cs}, {simple[n]}."
     if n == "go_around":
-        return f"{cs}, go around, fly runway heading."
+        if cmd["then"] == "runway_heading":
+            return f"{cs}, go around, fly runway heading."
+        return f"{cs}, go around, make {cmd['then'].split('_')[0]} traffic runway {rw}."
     if n == "approach_speed":
         return f"{cs}, maintain {cmd['kts']} kts until {APPROACH_SPEEDS[cmd['kts']]} mile final."
     if n == "make_360":

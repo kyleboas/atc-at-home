@@ -35,6 +35,7 @@ from .commands import ANSWERS, INFORMATIONAL, R, normalize, positions, render, r
 from .flight import Aircraft
 from .rules import Monitor
 
+PATTERN_ALT = 1500        # jets, 1,500 ft above the aerodrome (manual 3.4.1.1); KSFO is at 13 ft
 GROUND_PHASES = {"pushing", "pushed", "taxiing", "holding_short", "clear", "taxi_in", "exiting", "lining_up"}
 RUNWAY_PHASES = {"lining_up", "lined_up", "rolling", "landing_roll", "exiting", "rto"}
 TAXI_ACC = 1.0
@@ -562,7 +563,7 @@ class Sim:
                                and (not cmd.get("follow") or self.traffic_to_follow(ac, cmd["follow"], rw) is not None),
             "sequence": ac.airborne and ac.intent == "arrival" and self.traffic_to_follow(ac, cmd.get("follow")) is not None,
             "cancel_landing_clearance": ac.airborne and ac.clearance is not None,
-            "go_around": ac.airborne and ac.intent == "arrival",
+            "go_around": ac.airborne and ac.intent == "arrival" and (rw is None or rw in W.ARR_RUNWAYS),
             "approach_speed": ac.airborne, "speed_at_discretion": ac.airborne, "maintain_present_speed": ac.airborne,
             "slowest_practical_speed": ac.airborne, "best_forward_speed": ac.airborne,
             "adjust_speed_to_follow": ac.airborne, "make_360": ac.airborne and not ac.established,
@@ -684,7 +685,7 @@ class Sim:
                 "star": a.star, "star_trans": a.star_trans, "sid": a.sid, "sid_trans": a.sid_trans,
                 "approach_request": a.appr_req, "approach_expected": a.appr_exp, "approach_cleared": a.appr_cleared,
                 "loc_armed": a.loc_armed, "established": a.established, "radar_contact": a.radar_contact,
-                "missed": a.missed, "holding": a.holdp is not None, "hold_fix": a.hold_fix,
+                "missed": a.missed, "circuit": a.circuit, "holding": a.holdp is not None, "hold_fix": a.hold_fix,
                 "hold_info": {"fix": a.holdp["fix"], "crs": a.holdp["crs"], "laps": a.holdp["laps"]} if a.holdp else None,
                 "vectors_expected": a.vectors_expected or (bool(a.legs) and a.legs[0]["pt"] in ("FM", "VM")),
                 "clearance": a.clearance, "takeoff_cleared": a.takeoff_clear, "sequence": a.sequence,
@@ -983,7 +984,7 @@ class Sim:
         elif n == "cancel_landing_clearance":
             ac.clearance = None
         elif n == "go_around":
-            self.go_around(ac, cmd["then"], pilot=False)
+            self.go_around(ac, cmd["then"], pilot=False, runway=cmd.get("runway"))
         elif n == "approach_speed":
             ac.spd = {"kind": "kts", "kts": cmd["kts"], "until": {160: 4, 170: 5, 180: 6}[cmd["kts"]]}
         elif n == "speed_at_discretion":
@@ -1020,6 +1021,7 @@ class Sim:
                     ac.holdp = None
                 ac.nav, ac.hdg_target, ac.turn360 = "heading", W.mag2true(cmd["heading"]), None
                 ac.turn_dir = None                         # the shorter way round
+                ac.circuit = None
                 ac.hold_alt = None
                 ac.vectors_expected = True
                 if ac.established:
@@ -1121,6 +1123,7 @@ class Sim:
             return
         ac.appr_cleared = pid
         ac.appr_exp = pid
+        ac.circuit = None
         ac.runway = rwy
         ac.final_rwy = W.RUNWAYS[rwy]
         ac.glide_angle = P.glide_angle(pid)
@@ -1218,7 +1221,7 @@ class Sim:
         self.monitor.on_event("rto", ac)
 
     # ------------------------------------------------------------------ approach / landing
-    def go_around(self, ac, then, pilot):
+    def go_around(self, ac, then, pilot, runway=None):
         ac.m["go_arounds"] += 1
         if pilot:
             ac.say(self, "going_around")
@@ -1233,8 +1236,12 @@ class Sim:
         ac.flags.discard("final_checked")
         ac.climbout = ac.alt < F.CLIMBOUT_FT
         ac.gs_cap = False
-        ac.missed = True
         ac.appr_cleared, ac.loc_armed, ac.established, ac.alt_until = None, False, False, None
+        ac.circuit = None
+        if then in ("left_traffic", "right_traffic"):
+            self.fly_circuit(ac, then.split("_")[0], runway or ac.runway)
+            return
+        ac.missed = True
         ac.t_missed = self.t
         rwy = W.RUNWAYS[ac.runway]
         if then == "runway_heading" or not missed:
@@ -1248,6 +1255,39 @@ class Sim:
             ac.set_legs(missed, (ac.x, ac.y))
         ac.missed_alt = m_alt
         self.expect(ac, ac.appr_req if ac.appr_req in P.APPROACH_IDS.get(ac.runway, {}) else "ils", ac.runway)
+
+    def fly_circuit(self, ac, side, runway):
+        """Go around, make left/right traffic: a visual circuit at 1,500 ft (manual 3.4.1.1, jets),
+        upwind -> crosswind -> downwind 2.5 nm abeam -> base -> the instrument final course at 5 nm.
+        Radar (approach/departure) is always open here, so Tower still hands the aircraft to Approach
+        (3.5.4); it stays in the pattern only until then, and needs a new landing clearance to land."""
+        ac.missed = True
+        ac.t_missed = self.t
+        ac.circuit = side
+        ac.runway = runway
+        rwy = W.RUNWAYS[runway]
+        pid = P.APPROACH_IDS[runway]["ils"]
+        s = 1 if side == "right" else -1
+        pa = PATTERN_ALT
+        up = max(rwy.len_nm + 1.0, rwy.uv(ac.x, ac.y)[0] + 2.0)
+        u_base = rwy.u_thr - 5.0
+        leg = lambda tag, u, v, alt: {"pt": "TF", "fix": None, "pos": rwy.xy(u, v), "crs": None,  # noqa: E731
+                                      "amin": alt, "amax": alt, "spd": None, "tag": tag, "flyover": False}
+        legs = [leg("upwind", up, 0.0, pa), leg("crosswind", up, s * 2.5, pa),
+                leg("downwind", u_base, s * 2.5, pa), leg("base", u_base, 0.0, pa)]
+        thr = rwy.thr
+        final = [dict(lg) for lg in P.approach_legs(pid) if lg["tag"] in ("final", "missed")
+                 and (lg["tag"] == "missed" or lg.get("pos") is None or W.dist(lg["pos"], thr) < 5.0)]
+        final[0] = dict(final[0], pt="CF", crs=rwy.loc_course)
+        ac.nav = "lnav"
+        ac.alt_assigned = None
+        ac.vectors_expected = False
+        ac.set_legs(legs + final, (ac.x, ac.y))
+        # flown visually, joined at 5 nm: the glidepath from there on
+        ac.appr_cleared = ac.appr_exp = pid
+        ac.final_rwy = rwy
+        ac.glide_angle = P.glide_angle(pid)
+        ac.via = True
 
     def final_checks(self, ac, rem):
         if "final_checked" in ac.flags or rem is None or not ac.legs or ac.legs[0]["tag"] != "final":
@@ -1304,6 +1344,7 @@ class Sim:
             ac.stand = self.free_stand(ac)
         self.monitor.on_event("threshold", ac)
         ac.phase = "landing_roll"
+        ac.circuit = None
         ac.flare = True
         ac.touchdown_u = None
         ac.rate = 0.0
@@ -1536,6 +1577,10 @@ class Sim:
                 v = p["vapp"]
         if lg == "missed":
             v = min(vt, 210)
+        if lg in ("upwind", "crosswind", "downwind"):
+            v = min(v, 210)
+        elif lg == "base":
+            v = min(v, 180)
         if lg == "hold":
             v = min(v, F.HOLD_SPD[0] if ac.alt <= 14000 else F.HOLD_SPD[1])
         le = self.leader_eta(ac)
@@ -1557,10 +1602,15 @@ class Sim:
 
     def traffic_to_follow(self, ac, where, runway=None):
         """'Traffic to follow is on final': the arrival nearest ahead of ac to the same runway.
-        KSFO arrivals fly straight-in instrument approaches, so nobody is ever on base or downwind."""
-        if where != "final":
-            return None
+        On left/right base or downwind: the aircraft flying that leg of a circuit."""
         rw = runway or ac.runway
+        if where is None:
+            return None
+        if where != "final":
+            side, part = where.split("_")
+            c = [o for o in self.aircraft.values() if o is not ac and not o.m["done"] and o.airborne
+                 and o.circuit == side and o.leg() == part and o.runway == rw]
+            return min(c, key=lambda o: math.hypot(o.x - ac.x, o.y - ac.y)) if c else None
         if rw not in W.RUNWAYS:
             return None
         thr = W.RUNWAYS[rw].xy(0)
