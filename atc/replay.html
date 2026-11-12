@@ -257,22 +257,6 @@ function drawWorld(k) {
     if (k > 25) for (const id of [r.a, r.b]) { const q = P(r.thr[id][0], r.thr[id][1]); ctx.fillStyle = r.in_use.includes(id) ? '#d0d0d0' : '#5a5a5a'; ctx.fillText(id, q[0] + 4*dpr, q[1] + 12*dpr); }
   }
   if (k > 25) { const q = P(W.tower[0], W.tower[1]); ctx.strokeStyle = SCOPE.map; ctx.lineWidth = dpr; ctx.strokeRect(q[0] - 2.5*dpr, q[1] - 2.5*dpr, 5*dpr, 5*dpr); }
-  compass();
-}
-// the bearing scale round the edge of the scope: magnetic bearings from the range-ring centre (the ARP, or the
-// middle of the screen when the ARP is off it), a long tick every 10 degrees with its number, a short one every 5
-function compass() {
-  const dpr = devicePixelRatio, W2 = c.width, H2 = c.height;
-  let [cx, cy] = P(0, 0); if (cx < 0 || cy < 0 || cx > W2 || cy > H2) { cx = W2 / 2; cy = H2 / 2; }
-  ctx.font = FONT(10); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.strokeStyle = SCOPE.text; ctx.fillStyle = SCOPE.text; ctx.lineWidth = dpr;
-  for (let m = 0; m < 360; m += 5) {
-    const th = (m + W.magvar) * Math.PI / 180, dx = Math.sin(th), dy = -Math.cos(th);
-    const t = Math.min(dx > 0 ? (W2 - cx) / dx : dx < 0 ? -cx / dx : Infinity, dy > 0 ? (H2 - cy) / dy : dy < 0 ? -cy / dy : Infinity);
-    const ex = cx + dx * t, ey = cy + dy * t, len = (m % 10 ? 4 : 9) * dpr;
-    ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - dx * len, ey - dy * len); ctx.stroke();
-    if (m % 10 === 0) { const g = 20 * dpr; ctx.fillText(String(m === 0 ? 360 : m).padStart(3, '0'), ex - dx * g * 1.15, ey - dy * g); }
-  }
-  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
 }
 // track history: where each aircraft was on earlier frames (frames are 2 s apart), cached per frame
 const histCache = new Map();
