@@ -35,13 +35,17 @@ Flight documentation is linked in README.md.
 - Runway crossings (2.3): refer to the runway in the direction in use; cross only when the
   conditions in 2.3.2 hold; anticipated crossings are encouraged (2.3.3).
 - Taxiing (2.2): routes by taxiway name; avoid routes that meet opposite traffic (2.2.1).
-- Give way (2.2.1): Ground resolves taxi conflicts with `C.give_way(cs, to="left|right|ahead|exiting",
-  traffic=other_cs)` (the pilot stops short of the traffic's path and continues on their own once
-  it has passed), or `C.hold_short_taxiway(cs, taxiway="A")` + `C.continue_taxi(cs)`. When a new
+- Only Infinite Flight commands (atc/commands.py): the IF ATC menus plus what the IFATC manual
+  documents in the app (radar contact, drag & taxi, drag & vector approach clearances, holds at a
+  fix, direct-to, go-around "fly runway heading"). Nothing else exists: no callsign in a give way,
+  no hold short of a taxiway, no turn direction on a vector, sequencing says where the traffic to
+  follow is (`follow="final"`), not who it is.
+- Give way (2.2.1): Ground resolves taxi conflicts with `C.give_way(cs, to="left|right|ahead")` or
+  `C.give_way(cs, to="exiting", runway="28L")`. The pilot picks the traffic on that side when the
+  call is heard, stops short of its path and continues on their own once it has passed. When a new
   taxi route meets moving traffic, give way first, then the taxi clearance. `hold_position` to stop
   taxiing traffic counts as a 2.2.1 violation unless a collision is imminent (closest approach
-  < ~120 ft within 25 s, not in trail). Observation fields: `give_way`, `giving_way_now`,
-  `hold_short_taxiway`, `holding_short_taxiway`.
+  < ~120 ft within 25 s, not in trail). Observation fields: `give_way`, `giving_way_now`.
 - Radar: 3 nm / 1000 ft (6.2.2), MVA/terrain (6.2.1), speeds (6.15).
 
 ## Tower: anticipated separation (manual 3.1.2, 3.2.3)

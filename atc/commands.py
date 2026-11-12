@@ -1,10 +1,11 @@
 """Controller command menus and radio phraseology for KSFO (Ground, Tower, Approach, Departure).
 
-Built from Infinite Flight's ATC menus (reference/if-atc-menus.md, IF 21.1), the IFATC manual
-items the menus do not list (radar contact, approach clearances with an intercept heading and
-"maintain until established", fly runway heading on a go-around), and what a multi-runway airport
-needs: a runway designator in every runway clearance, cross runway / hold short runway X at Y,
-taxi routes by taxiway name, holds at a fix on the flight plan and direct-to (manual 6.7.3, 6.16).
+Only commands Infinite Flight's controller UI can send: the ATC menus (reference/if-atc-menus.md,
+IF 21.1) plus what the current IFATC manual documents in the app beyond those menus: "radar contact"
+reply to a check-in (6.4.4), drag & taxi routes (2.2.2), drag & vector approach clearances with an
+intercept heading and "maintain until established" (6.11), holds at a fix and exit hold (6.7.3),
+direct-to (6.16) and "fly runway heading" on a go-around (3.5.4). No free-text instructions: give way
+names a side, not a callsign; sequencing names where the traffic to follow is, not who it is.
 
 Values are restricted to the menus: headings 010-360 in 10 degree steps (MAGNETIC), altitudes
 1,000-9,500 ft in 500 ft steps, 10,000-17,000 ft, FL180-FL600 in 1,000 ft steps, speeds
@@ -27,15 +28,16 @@ APPROACH_SPEEDS = {160: 4, 170: 5, 180: 6}
 FACILITIES = ("ground", "tower", "approach", "departure", "center")
 APPROACHES = ("ils", "gps", "rnav")
 RUNWAYS = tuple(sorted(W.RUNWAYS))
-GO_AROUND_THEN = ("runway_heading", "missed_approach")
+GO_AROUND_THEN = ("runway_heading",)
+FOLLOW = ("final", "left_base", "right_base", "left_downwind", "right_downwind")
 
 SPEC = {
     # ---- shared ----
     "contact_frequency": (ANY, ["facility"], {}, "Contact other frequency > Facility [XX]"),
     "freq_change_approved": (ANY, [], {}, "Contact other frequency > Frequency change approved"),
     "hold_position": ((G, T), [], {}, "Hold position"),
-    "hold_short": ((G, T), ["runway"], {"at": None}, "Hold short > Runway [XX] (at taxiway Y)"),
-    "cross_runway": ((G, T), ["runway"], {"expedite": False, "then_contact": None},
+    "hold_short": ((G, T), ["runway"], {}, "Hold short > Runway [XX]"),
+    "cross_runway": ((G, T), ["runway"], {"expedite": False},
                      "Cross runway > Runway [XX] > Send | Expedite (2.3)"),
     # ---- ground ----
     "pushback_approved": ((G,), [], {"expect_runway": None}, "Pushback approved > Send | Runway [XX]"),
@@ -43,11 +45,9 @@ SPEC = {
                        "Taxi to > Runway [XX] (drag & taxi route via taxiways, manual 2.2.2)"),
     "taxi_to_parking": ((G,), [], {"via": None}, "Taxi to > Parking (drag & taxi route, manual 2.2.4)"),
     "continue_taxi": ((G,), [], {}, "Continue taxi"),
-    "give_way": ((G,), ["to"], {"traffic": None},
-                 "Give way to > Aircraft exiting runway | on your left | on your right | ahead (2.2.1); the pilot "
-                 "stops short of the traffic's path and continues on their own once it has passed"),
-    "hold_short_taxiway": ((G,), ["taxiway"], {},
-                           "Hold short > Taxiway [X] (on the taxi route; released with 'continue taxi')"),
+    "give_way": ((G,), ["to"], {"runway": None},
+                 "Give way to > Aircraft exiting runway > Runway [XX] | Aircraft on your left | on your right | ahead "
+                 "(2.2.1); the pilot stops short of that traffic's path and continues on their own once it has passed"),
     # ---- tower: departures ----
     "line_up_and_wait": ((T,), ["runway"], {}, "Line up and wait > Runway [XX]"),
     "cleared_takeoff": ((T,), ["runway"], {"immediate": False}, "Cleared for takeoff > Runway [XX] > Send | Request immediate takeoff"),
@@ -56,10 +56,12 @@ SPEC = {
     # ---- tower: arrivals ----
     "exit_runway": ((T,), [], {"side": "any", "expedite": None, "then": None},
                     "Exit runway > Left|Right|Any > Send|Expedite... (then: hold_short | cross, 3.5.3)"),
-    "cleared_to_land": ((T,), ["runway"], {"number": 1, "follow": None}, "Cleared to land > Number N > Runway [XX]"),
-    "sequence": ((T,), ["number", "follow"], {}, "Sequencing > Number N > Traffic to follow is on final"),
+    "cleared_to_land": ((T,), ["runway"], {"number": 1, "follow": None},
+                        "Cleared to land > Number 1 > Runway [XX] | Number N > Traffic to follow is on final|..."),
+    "sequence": ((T,), ["number", "follow"], {}, "Sequencing > Number N > Traffic to follow is on final|base|downwind"),
     "cancel_landing_clearance": ((T,), [], {}, "Pattern instructions > Cancel landing clearance"),
-    "go_around": ((T,), ["then"], {}, "Go around > fly runway heading (3.5.4) | published missed approach"),
+    "go_around": ((T,), [], {"then": "runway_heading"},
+                  "Go around > fly runway heading (3.5.4; the menu's make left/right traffic is pattern work, not modelled)"),
     # ---- speed (tower + radar) ----
     "approach_speed": ((T, R), ["kts"], {}, "Request speed > Approach speed > 160/170/180 kts until 4/5/6 mile final"),
     "speed_at_discretion": ((T, R), [], {}, "Request speed > Speed at your discretion"),
@@ -69,20 +71,20 @@ SPEC = {
     "adjust_speed_to_follow": ((T, R), [], {}, "Request speed > Adjust speed to follow"),
     "make_360": ((T, R), ["direction"], {}, "Request 360 > Make left|right 360"),
     # ---- radar: approach + departure ----
-    "radar_contact": ((R,), [], {}, "(manual 6.4.4) Radar contact"),
+    "radar_contact": ((R,), [], {}, "Check-in reply > Radar contact (manual 6.4.4)"),
     "expect_approach": ((R,), ["approach", "runway"], {"then": "continue_as_filed"},
                         "Expect approach > ILS|GPS|RNAV > Runway [XX] > Continue as filed | Expect vectors"),
-    "vector": ((R,), [], {"heading": None, "altitude": None, "turn": None},
+    "vector": ((R,), [], {"heading": None, "altitude": None},
                "Vectoring instructions > Altitude and heading | Altitude | Heading"),
     "continue_as_filed": ((R,), [], {}, "Vectoring instructions > Continue as filed"),
     "resume_own_navigation": ((R,), [], {}, "Vectoring instructions > Resume own navigation"),
-    "direct_to": ((R,), ["fix"], {}, "(manual 6.16) Direct to a fix on the flight plan"),
+    "direct_to": ((R,), ["fix"], {}, "Drag & vector over a fix on the flight plan > Direct to (manual 6.16)"),
     "altitude_at_discretion": ((R,), [], {}, "Misc > Altitude at discretion"),
     "expedite_altitude": ((R,), [], {}, "Misc > Expedite altitude change"),
     "maintain_speed": ((R,), ["kts"], {"mode": None}, "Request speed > Maintain speed > N kts > Send | Or greater | Or below"),
     "hold_present_position": ((R,), ["turns", "altitude"], {}, "Request hold > Present position > Left|Right turns > altitude"),
-    "hold_at_fix": ((R,), ["fix", "altitude"], {"turns": "right"}, "(manual 6.7.3) Hold over a fix on the flight plan > turns > altitude"),
-    "exit_hold": ((R,), [], {}, "(manual 6.7.3) Exit hold"),
+    "hold_at_fix": ((R,), ["fix", "altitude"], {"turns": "right"}, "Drag & vector over a fix on the flight plan > Hold > turns > altitude (manual 6.7.3)"),
+    "exit_hold": ((R,), [], {}, "Exit hold (manual 6.7.3)"),
     "cleared_approach": ((R,), ["approach", "runway"], {"heading": None, "altitude": None},
                          "(manual 6.10 / 6.11, drag & vector) [fly heading X,] [maintain Y until established,] cleared ILS|GPS|RNAV approach runway [XX]"),
 }
@@ -98,7 +100,7 @@ ANSWERS = {
                  "hold_present_position", "hold_at_fix"},
     "holding_short": {"cross_runway", "hold_short", "hold_position"},
 }
-INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed", "holding_short_taxiway"}
+INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed"}
 
 
 class _C:
@@ -138,20 +140,17 @@ def normalize(cmd):
         return cmd, f"{name} has unknown args {sorted(extra)}"
     checks = [
         ("facility", lambda v: v in FACILITIES, f"facility must be one of {FACILITIES}"),
-        ("then_contact", lambda v: v in (None, "ground", "tower"), "then_contact must be None|ground|tower"),
         ("heading", lambda v: v is None or v in HEADINGS, "heading must be 010-360 in 10 degree steps"),
         ("altitude", lambda v: v is None or v in ALTITUDES, "altitude must be a menu value"),
         ("direction", lambda v: v in ("left", "right"), "direction must be left|right"),
         ("turns", lambda v: v in ("left", "right"), "turns must be left|right"),
-        ("turn", lambda v: v in (None, "left", "right"), "turn must be None|left|right"),
         ("number", lambda v: v is None or (isinstance(v, int) and 1 <= v <= 8), "number must be 1-8"),
         ("to", lambda v: v in ("exiting", "left", "right", "ahead"), "give way to exiting|left|right|ahead"),
-        ("traffic", lambda v: v is None or isinstance(v, str), "traffic must be a callsign"),
-        ("taxiway", lambda v: v in W.TAXIWAYS, "taxiway must be a KSFO taxiway name"),
+        ("follow", lambda v: v is None or v in FOLLOW, f"follow (traffic to follow is on) must be one of {FOLLOW}"),
         ("side", lambda v: v in ("left", "right", "any"), "side must be left|right|any"),
         ("expedite", lambda v: v in (None, False, True, "final"), "expedite must be None|True|'final'"),
         ("mode", lambda v: v in (None, "or_greater", "or_below"), "mode must be None|or_greater|or_below"),
-        ("runway", lambda v: v in RUNWAYS, f"runway must be one of {RUNWAYS}"),
+        ("runway", lambda v: v in RUNWAYS or (name == "give_way" and v is None), f"runway must be one of {RUNWAYS}"),
         ("expect_runway", lambda v: v is None or v in RUNWAYS, "expect_runway must be a runway"),
         ("approach", lambda v: v in APPROACHES, "approach must be ils|gps|rnav"),
         ("fix", lambda v: isinstance(v, str), "fix must be a fix name"),
@@ -160,7 +159,13 @@ def normalize(cmd):
         if k in out and not ok(out[k]):
             return cmd, msg
     if name == "go_around" and out["then"] not in GO_AROUND_THEN:
-        return cmd, "go_around then must be runway_heading|missed_approach"
+        return cmd, "go_around then must be runway_heading"
+    if name == "give_way" and (out["to"] == "exiting") != (out["runway"] is not None):
+        return cmd, "give way: 'exiting' needs the runway [XX]; left|right|ahead take no runway"
+    if name == "cleared_to_land" and out["number"] > 1 and out["follow"] is None:
+        return cmd, "cleared to land number 2-8 needs follow (where the traffic to follow is)"
+    if name == "cleared_to_land" and out["number"] == 1 and out["follow"] is not None:
+        return cmd, "cleared to land number 1 has no traffic to follow"
     if name == "exit_runway" and out["then"] not in (None, "hold_short", "cross"):
         return cmd, "exit_runway then must be None|hold_short|cross"
     if "via" in out and out["via"] is not None:
@@ -188,6 +193,8 @@ def hdg_txt(h):
     return f"{int(h):03d}"
 
 
+FOLLOW_TXT = {"final": "final", "left_base": "left base", "right_base": "right base",
+              "left_downwind": "left downwind", "right_downwind": "right downwind"}
 KIND_TXT = {"ils": "ILS", "gps": "RNAV (GPS)", "rnav": "RNAV (RNP)"}
 
 
@@ -202,12 +209,9 @@ def render(cmd, ac=None, leader=None):
     if n == "hold_position":
         return f"{cs}, hold position."
     if n == "hold_short":
-        return f"{cs}, hold short runway {rw}" + (f" at {cmd['at']}." if cmd.get("at") else ".")
+        return f"{cs}, hold short runway {rw}."
     if n == "cross_runway":
-        txt = f"{cs}, cross runway {rw}" + (", expedite" if cmd["expedite"] else "")
-        if cmd.get("then_contact"):
-            txt += f", contact {fac(cmd['then_contact'])} when clear"
-        return txt + "."
+        return f"{cs}, cross runway {rw}" + (", expedite." if cmd["expedite"] else ".")
     if n == "pushback_approved":
         return f"{cs}, pushback approved" + (f", expect runway {cmd['expect_runway']}." if cmd["expect_runway"] else ".")
     if n == "taxi_to_runway":
@@ -225,11 +229,8 @@ def render(cmd, ac=None, leader=None):
     if n == "continue_taxi":
         return f"{cs}, continue taxi."
     if n == "give_way":
-        who = cmd.get("traffic") or "aircraft"
-        return f"{cs}, give way to {who} " + {"exiting": "exiting the runway", "left": "on your left",
-                                              "right": "on your right", "ahead": "ahead"}[cmd["to"]] + "."
-    if n == "hold_short_taxiway":
-        return f"{cs}, hold short of taxiway {cmd['taxiway']}."
+        return f"{cs}, give way to aircraft " + {"exiting": f"exiting runway {rw}", "left": "on your left",
+                                                 "right": "on your right", "ahead": "ahead"}[cmd["to"]] + "."
     if n == "line_up_and_wait":
         return f"{cs}, runway {rw}, line up and wait."
     if n == "cleared_takeoff":
@@ -250,10 +251,10 @@ def render(cmd, ac=None, leader=None):
         return f"{cs}, {ex}{then}, contact ground {W.FREQS['ground']} when clear."
     if n == "cleared_to_land":
         num = cmd["number"] or 1
-        txt = f"{cs}, " + (f"number {num}, follow {cmd['follow']} on final, " if num > 1 and cmd.get("follow") else "")
+        txt = f"{cs}, " + (f"number {num}, traffic to follow is on {FOLLOW_TXT[cmd['follow']]}, " if num > 1 else "")
         return txt + f"runway {rw}, cleared to land."
     if n == "sequence":
-        return f"{cs}, number {cmd['number']}, follow {cmd['follow']} on final."
+        return f"{cs}, number {cmd['number']}, traffic to follow is on {FOLLOW_TXT[cmd['follow']]}."
     if n == "cancel_landing_clearance":
         return f"{cs}, cancel landing clearance."
     simple = {
@@ -267,8 +268,7 @@ def render(cmd, ac=None, leader=None):
     if n in simple:
         return f"{cs}, {simple[n]}."
     if n == "go_around":
-        then = "fly runway heading" if cmd["then"] == "runway_heading" else "fly the published missed approach"
-        return f"{cs}, go around, {then}."
+        return f"{cs}, go around, fly runway heading."
     if n == "approach_speed":
         return f"{cs}, maintain {cmd['kts']} kts until {APPROACH_SPEEDS[cmd['kts']]} mile final."
     if n == "make_360":
@@ -279,7 +279,11 @@ def render(cmd, ac=None, leader=None):
     if n == "vector":
         parts = []
         if cmd["heading"] is not None:
-            parts.append(f"{'turn ' + cmd['turn'] + ' ' if cmd.get('turn') else 'fly '}heading {hdg_txt(cmd['heading'])}")
+            turn = ""
+            if ac is not None:
+                d = W.ang_diff(ac.hdg, W.mag2true(cmd["heading"]))
+                turn = "turn right " if d > 5 else ("turn left " if d < -5 else "")
+            parts.append(f"{turn or 'fly '}heading {hdg_txt(cmd['heading'])}")
         if cmd["altitude"] is not None:
             verb = "climb" if ac is not None and cmd["altitude"] > ac.alt + 50 else "descend"
             if ac is not None and abs(cmd["altitude"] - ac.alt) <= 50:
@@ -334,8 +338,6 @@ def render_pilot(kind, ac, data, atis):
         return f"San Francisco Ground, {cs}, clear of runway {data.get('rwy', ac.runway)}{where}{hs}, request taxi to parking."
     if kind == "holding_short":
         return f"{cs}, holding short runway {data.get('rwy')}."
-    if kind == "holding_short_taxiway":
-        return f"{cs}, holding short of taxiway {data.get('twy')}."
     if kind == "clear_of_runway":
         return f"{cs}, clear of runway {data.get('rwy')}."
     if kind == "crossed":

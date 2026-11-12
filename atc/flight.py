@@ -117,7 +117,6 @@ class Aircraft:
         self.hold_until = None
         self.give_way = None              # {"cs": traffic, "to": side, "t0", "clear_s", "still_s"} (manual 2.2.1)
         self.gw_stop = False              # stopped now, giving way
-        self.tw_hold = None               # {"twy": name, "k": stop index or None, "at": bool}: hold short of a taxiway
         self.msg_due = None
         self.gpath = []                   # taxi polyline [(x, y, node|None)]
         self.gk = 0                       # index of the next point

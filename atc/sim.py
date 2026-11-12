@@ -165,10 +165,6 @@ class Sim:
         ac.gpath, ac.gk, ac.gstops = pts, 1 if len(pts) > 1 else 0, stops
         ac.taxi_total = max(0.01, self.path_len(ac))
         ac._cross_names = [s["rwy"] for s in stops]
-        if ac.tw_hold:
-            self.place_tw_hold(ac)
-            if ac.tw_hold["k"] is None:
-                ac.tw_hold = None
 
     def path_len(self, ac):
         pts = [(ac.x, ac.y)] + [p[:2] for p in ac.gpath[ac.gk:]]
@@ -180,12 +176,9 @@ class Sim:
             if not s["done"] and not s["cleared"]:
                 end = s["k"]
                 break
-        tw = ac.tw_hold
-        if tw and tw.get("k") is not None and tw["k"] < end:
-            end = tw["k"]
         return end
 
-    # ------------------------------------------------------------------ give way / hold short of a taxiway (2.2.1)
+    # ------------------------------------------------------------------ give way (2.2.1)
     @staticmethod
     def edge_name(a, b):
         ks = [k for m, k in W.ADJ[a] if m == b]
@@ -221,9 +214,11 @@ class Sim:
                 best = min(best, ps(a, c, d), ps(b, c, d), ps(c, a, b), ps(d, a, b))
         return best
 
-    def give_way_target(self, ac, to, cs=None):
-        """Traffic the pilot will give way to: the named aircraft, or the nearest one on that side."""
+    def give_way_target(self, ac, to, runway=None):
+        """Traffic the pilot gives way to: on that side (or exiting that runway), the one whose path
+        meets the pilot's own first, else the nearest. IF's give way names a side, not a callsign."""
         exiting = ("landing_roll", "exiting", "clear")
+        mine = self.ahead_pts(ac, 0.12)
         cands = []
         for o in self.aircraft.values():
             if o is ac or o.m["done"] or (o.airborne and o.phase != "landing_roll"):
@@ -234,15 +229,13 @@ class Sim:
             if d > 0.4:
                 continue
             rb = W.ang_diff(ac.hdg, W.bearing((ac.x, ac.y), (o.x, o.y)))
-            side = {"exiting": o.phase in exiting and o.intent == "arrival" and bool(o.zone),
+            side = {"exiting": o.phase in exiting and o.intent == "arrival" and bool(o.zone)
+                               and (runway is None or o.runway == runway),
                     "left": -160 <= rb <= -20, "right": 20 <= rb <= 160, "ahead": abs(rb) <= 45}.get(to, False)
-            if cs is not None:
-                if o.cs == cs:
-                    return o if side else None
-                continue
             if side:
-                cands.append((d, o.cs, o))
-        return min(cands)[2] if cands else None
+                theirs = self.ahead_pts(o, 0.25) if o.gpath and o.gk < len(o.gpath) else [(o.x, o.y)]
+                cands.append((self.poly_dist(mine, theirs) >= 0.035, d, o.cs, o))
+        return min(cands)[3] if cands else None
 
     def update_give_way(self, ac):
         """Pilot giving way: keeps taxiing, stops short of the traffic's path while it conflicts, and
@@ -264,49 +257,6 @@ class Sim:
             ac.give_way, ac.gw_stop = None, False
             return
         ac.gw_stop = conf
-
-    def place_tw_hold(self, ac):
-        """Put the hold-short point ~120 ft before the route next enters taxiway tw_hold['twy']."""
-        tw = ac.tw_hold
-        tw["k"], tw["at"] = None, False
-        if not ac.gpath:
-            return
-        idx = [i for i in range(len(ac.gpath)) if ac.gpath[i][2]]
-        cur = None
-        for a, b in zip(idx, idx[1:]):
-            nm = self.edge_name(ac.gpath[a][2], ac.gpath[b][2])
-            if a < ac.gk - 1:
-                cur = nm
-                continue
-            if nm == tw["twy"] and cur != tw["twy"]:
-                back, j, pt = 0.02, a, ac.gpath[a][:2]
-                while j > ac.gk and back > 0:
-                    q = ac.gpath[j - 1][:2]
-                    seg = W.dist(q, pt)
-                    if seg >= back:
-                        f = back / seg
-                        pt = (pt[0] + (q[0] - pt[0]) * f, pt[1] + (q[1] - pt[1]) * f)
-                        back = 0
-                        break
-                    back -= seg
-                    pt = q
-                    j -= 1
-                if back > 0:                # no room left: stop at the next point
-                    tw["k"] = max(ac.gk, j)
-                    return
-                ac.gpath.insert(j, (pt[0], pt[1], None))
-                for st in ac.gstops:
-                    if st["k"] >= j:
-                        st["k"] += 1
-                tw["k"] = j
-                return
-            cur = nm
-
-    def tw_ahead(self, ac, twy):
-        if not ac.gpath:
-            return False
-        nodes = [p[2] for p in ac.gpath[max(0, ac.gk - 1):] if p[2]]
-        return any(self.edge_name(a, b) == twy for a, b in zip(nodes, nodes[1:]))
 
     def ground_traffic(self):
         return [o for o in self.aircraft.values() if not o.m["done"] and o.phase in GROUND_PHASES]
@@ -600,18 +550,17 @@ class Sim:
             "pushback_approved": ph in ("gate_req", "push_hold") or (ph == "pushing" and ac.hold),
             "taxi_to_runway": ph in ("pushed", "taxiing") and rw in W.DEP_RUNWAYS,
             "taxi_to_parking": ph in ("clear", "taxi_in"),
-            "continue_taxi": ph in ("taxiing", "taxi_in", "pushing", "clear") and bool(ac.hold or ac.tw_hold),
+            "continue_taxi": ph in ("taxiing", "taxi_in", "pushing", "clear") and bool(ac.hold),
             "give_way": ph in ("taxiing", "taxi_in", "clear", "pushed")
-                        and self.give_way_target(ac, cmd.get("to"), cmd.get("traffic")) is not None,
-            "hold_short_taxiway": (ph in ("pushed", "clear") and not ac.gpath) or
-                                  (ph in ("taxiing", "taxi_in", "clear") and self.tw_ahead(ac, cmd.get("taxiway"))),
+                        and self.give_way_target(ac, cmd.get("to"), cmd.get("runway")) is not None,
             "line_up_and_wait": ph == "holding_short" and self.front(ac) and rw == ac.runway,
             "cleared_takeoff": ((ph == "holding_short" and self.front(ac)) or ph in ("lining_up", "lined_up")) and rw == ac.runway,
             "cancel_takeoff": ph in ("lining_up", "lined_up", "rolling"),
             "departure_sequence": ph in ("holding_short", "taxiing"),
             "exit_runway": ph in ("landing_roll",),
-            "cleared_to_land": ac.airborne and ac.intent == "arrival" and rw in W.ARR_RUNWAYS,
-            "sequence": ac.airborne and ac.intent == "arrival",
+            "cleared_to_land": ac.airborne and ac.intent == "arrival" and rw in W.ARR_RUNWAYS
+                               and (not cmd.get("follow") or self.traffic_to_follow(ac, cmd["follow"], rw) is not None),
+            "sequence": ac.airborne and ac.intent == "arrival" and self.traffic_to_follow(ac, cmd.get("follow")) is not None,
             "cancel_landing_clearance": ac.airborne and ac.clearance is not None,
             "go_around": ac.airborne and ac.intent == "arrival",
             "approach_speed": ac.airborne, "speed_at_discretion": ac.airborne, "maintain_present_speed": ac.airborne,
@@ -741,8 +690,7 @@ class Sim:
                 "clearance": a.clearance, "takeoff_cleared": a.takeoff_clear, "sequence": a.sequence,
                 "follow": a.leader, "hold": a.hold,
                 "give_way": a.give_way["cs"] if a.give_way else None, "giving_way_now": a.gw_stop,
-                "hold_short_taxiway": a.tw_hold["twy"] if a.tw_hold else None,
-                "holding_short_taxiway": bool(a.tw_hold and a.tw_hold["at"]), "exit_called": a.exit_cmd is not None,
+                "exit_called": a.exit_cmd is not None,
                 "t_landed": a.m["t_landed"], "t_airborne": a.m["t_airborne"], "t_roll": a.m["t_roll"],
                 "filed_alt": a.filed_alt,
             })
@@ -918,23 +866,19 @@ class Sim:
             elif ph != "lining_up":
                 ac.hold = True
         elif n == "continue_taxi":
-            ac.hold = False
-            ac.tw_hold = None              # a give way stays in force until the traffic has passed
+            ac.hold = False                # a give way stays in force until the traffic has passed
         elif n == "give_way":
-            # resolved when heard: the named traffic (sides move as both taxi), else the nearest on that side
-            o = self.aircraft.get(cmd.get("traffic") or "") or self.give_way_target(ac, cmd["to"])
+            # resolved when heard: whoever is on that side (or exiting that runway) by then
+            o = self.give_way_target(ac, cmd["to"], cmd.get("runway"))
             if o is not None and not o.m["done"]:
                 ac.give_way = {"cs": o.cs, "to": cmd["to"], "t0": self.t, "clear_s": 0, "still_s": 0}
-        elif n == "hold_short_taxiway":
-            ac.tw_hold = {"twy": cmd["taxiway"], "k": None, "at": False}
-            self.place_tw_hold(ac)
         elif n == "hold_short":
             ac.cross_clear.discard(cmd["runway"])
             for s in ac.gstops:
                 if s["rwy"] == cmd["runway"] and not s["done"] and not s["entered"]:
                     s["cleared"] = False
         elif n == "cross_runway":
-            self.cross(ac, cmd["runway"], cmd.get("then_contact"))
+            self.cross(ac, cmd["runway"])
         elif n == "taxi_to_runway" and ph in ("pushed", "taxiing"):
             if ph == "pushed" or cmd["runway"] != ac.runway:
                 ac.runway = cmd["runway"]
@@ -979,7 +923,7 @@ class Sim:
     def free_stand_slot(self, ac):
         self.reserved.discard(ac.stand)
 
-    def cross(self, ac, rwy, then_contact=None):
+    def cross(self, ac, rwy):
         ac.cross_clear.add(rwy)
         for s in ac.gstops:
             if not s["done"] and s["rwy"] == rwy:
@@ -992,8 +936,6 @@ class Sim:
                 ac.gstops = [{"k": 0, "rwy": rwy, "cleared": True, "done": False, "entered": False}]
         if ac.hold:
             ac.hold = False
-        if then_contact:
-            ac.switch_to_ground_when_clear = True
 
     def cross_path(self, ac, rwy):
         """Straight across runway `rwy` along the taxiway from the hold-short node to the first
@@ -1030,11 +972,14 @@ class Sim:
         if n == "cleared_to_land":
             ac.clearance = cmd["runway"]
             if cmd["number"] and cmd["number"] > 1:
-                ac.sequence, ac.leader = cmd["number"], cmd["follow"]
+                ld = self.traffic_to_follow(ac, cmd["follow"], cmd["runway"])
+                ac.sequence, ac.leader = cmd["number"], ld.cs if ld else None
             else:
                 ac.sequence, ac.leader = 1, None
         elif n == "sequence":
-            ac.sequence, ac.leader = cmd["number"], cmd["follow"]
+            ld = self.traffic_to_follow(ac, cmd["follow"])
+            if ld is not None:
+                ac.sequence, ac.leader = cmd["number"], ld.cs
         elif n == "cancel_landing_clearance":
             ac.clearance = None
         elif n == "go_around":
@@ -1074,7 +1019,7 @@ class Sim:
                 if ac.holdp is not None:
                     ac.holdp = None
                 ac.nav, ac.hdg_target, ac.turn360 = "heading", W.mag2true(cmd["heading"]), None
-                ac.turn_dir = cmd.get("turn")
+                ac.turn_dir = None                         # the shorter way round
                 ac.hold_alt = None
                 ac.vectors_expected = True
                 if ac.established:
@@ -1479,9 +1424,6 @@ class Sim:
         # holding short at a stop
         end = self.stop_k(ac)
         st = next((s for s in ac.gstops if s["k"] == end and not s["done"] and not s["cleared"]), None)
-        if ac.tw_hold and ac.tw_hold.get("k") == end and ac.gk >= end and ac.gspeed == 0 and not ac.tw_hold["at"]:
-            ac.tw_hold["at"] = True
-            ac.say(self, "holding_short_taxiway", {"twy": ac.tw_hold["twy"]})
         if st is not None and end < len(ac.gpath) - 1 and ac.gk >= end and ac.gspeed == 0:
             if ac.hs_rwy != st["rwy"]:
                 ac.hs_rwy = st["rwy"]
@@ -1611,6 +1553,25 @@ class Sim:
             if rem is not None and ro is not None and ro < rem and math.hypot(o.x - ac.x, o.y - ac.y) < 8:
                 if br is None or ro > br:
                     best, br = o, ro
+        return best
+
+    def traffic_to_follow(self, ac, where, runway=None):
+        """'Traffic to follow is on final': the arrival nearest ahead of ac to the same runway.
+        KSFO arrivals fly straight-in instrument approaches, so nobody is ever on base or downwind."""
+        if where != "final":
+            return None
+        rw = runway or ac.runway
+        if rw not in W.RUNWAYS:
+            return None
+        thr = W.RUNWAYS[rw].xy(0)
+        mine = W.dist((ac.x, ac.y), thr)
+        best, bd = None, -1
+        for o in self.aircraft.values():
+            if o is ac or o.m["done"] or not o.airborne or o.intent != "arrival" or o.runway != rw:
+                continue
+            d = W.dist((o.x, o.y), thr)
+            if d < mine and d > bd:
+                best, bd = o, d
         return best
 
     def leader_eta(self, ac):

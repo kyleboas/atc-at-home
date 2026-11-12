@@ -488,12 +488,12 @@ class Ground:
         for cs, (ocs, shared, t0) in list(self.wait.items()):
             a, o = acs.get(cs), acs.get(ocs)
             gone = o is None or not set(o.get("groute") or []) & shared or o["phase"] not in ("taxiing", "taxi_in", "pushing") \
-                or c.t - t0 > 150 or ((o["hold"] or o.get("give_way") or o.get("hold_short_taxiway")) and o["cs"] in self.wait)
+                or c.t - t0 > 150 or ((o["hold"] or o.get("give_way")) and o["cs"] in self.wait)
             if a is None or a["phase"] not in ("taxiing", "taxi_in"):
                 self.wait.pop(cs)
-            elif c.t - t0 > 15 and not (a["hold"] or a.get("hold_short_taxiway") or a.get("give_way")):
+            elif c.t - t0 > 15 and not (a["hold"] or a.get("give_way")):
                 self.wait.pop(cs)                      # gave way and has continued on their own
-            elif gone and c.quiet(cs, 4) and (a["hold"] or a.get("hold_short_taxiway")):
+            elif gone and c.quiet(cs, 4) and a["hold"]:
                 self.wait.pop(cs)
                 c.send(out, C.continue_taxi(cs))
         for i, a in enumerate(movers):
@@ -523,24 +523,14 @@ class Ground:
                     waiter, other, dw = other, waiter, min(da, db)   # the one in the way cannot give way
                 if dw < 0.008 or not c.quiet(waiter["cs"], 3):
                     continue                           # already on it (cannot stop short)
-                nw = prof[waiter["cs"]][0]
-                entry = min((n for n in shared if n in prof[waiter["cs"]][1]), key=lambda k: prof[waiter["cs"]][1][k])
-                twy = _entering_taxiway(waiter, nw, entry)
-                if dw > 0.06:
-                    # early: hold short of the taxiway where the conflict starts, if it is a different one
-                    if twy and dw < 0.25:
-                        c.send(out, C.hold_short_taxiway(waiter["cs"], taxiway=twy))
-                        self.wait[waiter["cs"]] = (other["cs"], shared, c.t)
+                if dw > 0.25:
                     continue
                 side = _side(waiter, other)
-                if not side and twy is None and _side(other, waiter) and c.quiet(other["cs"], 3):
+                if not side and _side(other, waiter) and c.quiet(other["cs"], 3):
                     waiter, other, side = other, waiter, _side(other, waiter)   # traffic behind: it gives way
-                if side:
-                    c.send(out, C.give_way(waiter["cs"], to=side, traffic=other["cs"]))     # 2.2.1
-                elif twy:
-                    c.send(out, C.hold_short_taxiway(waiter["cs"], taxiway=twy))
-                else:
+                if not side:
                     continue
+                c.send(out, C.give_way(waiter["cs"], to=side))     # 2.2.1
                 self.wait[waiter["cs"]] = (other["cs"], shared, c.t)
 
     def imminent(self, acs, out):
@@ -564,7 +554,7 @@ class Ground:
             side = _side(loser, winner) or "ahead"
             if winner["hold"]:
                 c.send(out, C.continue_taxi(winner["cs"]))
-            c.send(out, C.give_way(loser["cs"], to=side, traffic=winner["cs"]))
+            c.send(out, C.give_way(loser["cs"], to=side))
             if loser["hold"]:
                 c.send(out, C.continue_taxi(loser["cs"]))
             self.wait.pop(loser["cs"], None)
@@ -595,7 +585,7 @@ class Ground:
             if _poly_dist(mine, theirs) < 0.04:
                 side = _side(a, o)
                 if side:
-                    self.c.send(out, C.give_way(a["cs"], to=side, traffic=o["cs"]))
+                    self.c.send(out, C.give_way(a["cs"], to=side))
                     return
 
     @staticmethod
@@ -649,22 +639,6 @@ def _side(a, o):
     if 20 <= rb <= 160:
         return "right"
     return None
-
-
-def _entering_taxiway(a, nodes, entry):
-    """Name of the taxiway the route turns onto at or just before node `entry`, if not the current one."""
-    if entry not in nodes:
-        return None
-    i = nodes.index(entry)
-    names = []
-    for u, v in zip(nodes, nodes[1:]):
-        ks = [k for m, k in W.ADJ[u] if m == v]
-        names.append(W.EDGES[min(ks, key=lambda kk: W.EDGES[kk][4])][2] if ks else None)
-    cur = names[0] if names else None
-    if i >= len(names) or i == 0:
-        return None
-    nxt = names[i]
-    return nxt if nxt and nxt != cur and nxt in W.TAXIWAYS and names[i - 1] != nxt else None
 
 
 def _poly_dist(p, q):
@@ -838,7 +812,7 @@ class Tower:
                 c.send(out, C.exit_runway(cs, side="any"))
             elif a["phase"] == "clear" and a["hs_rwy"] and c.quiet(cs, 6) and a["hs_rwy"] not in a["cross_clear"]:
                 if self.crossing_ok(a["hs_rwy"], a, acs):
-                    c.send(out, C.cross_runway(cs, runway=a["hs_rwy"], then_contact="ground"))
+                    c.send(out, C.cross_runway(cs, runway=a["hs_rwy"]))
             elif a["phase"] == "clear" and not a["hs_rwy"] and c.quiet(cs, 4) and c.once(cs, "to_ground"):
                 c.send(out, C.contact_frequency(cs, facility="ground"))
 
@@ -1423,7 +1397,7 @@ class Approach:
             # runway heading to the missed approach altitude, then right turn north over the bay
             if a["alt"] > 1500 and a["x"] < -1.5:
                 alt = max(5000, menu_alt_above(mva_ahead(a["x"], a["y"], W.mag2true(360), a["gs"])))
-                c.send(out, C.vector(cs, heading=360, altitude=alt, turn="right"))
+                c.send(out, C.vector(cs, heading=360, altitude=alt))
                 v["phase"] = "missed_north"
             return
         if ph == "missed_north":
