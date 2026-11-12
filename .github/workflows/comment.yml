@@ -30,20 +30,20 @@ jobs:
             const n = v => (typeof v === 'number' && isFinite(v)) ? String(v) : '–';
             const REASONS = {
               hard: 'more hard violations (separation, collision alarms, near misses, terrain) than the current best',
-              manual: 'more manual intercept / handoff / taxi violations (6.11, 6.14, 2.2) than the current best',
+              manual: 'more approach / taxi violations (FAA 5-9, 3-7) than the current best',
               cost: 'cost is not lower than the current best',
             };
             let body;
             if (!r) {
-              body = '### ATC autoresearch\n\nNo score: the check failed before scoring (only `controller.py` may change, ' +
+              body = '### atc-at-home\n\nNo score: the check failed before scoring (only `controller.py` may change, ' +
                      'and the controller must run without errors). See the **evaluate** run for details.';
             } else {
               const b = r.best || {};
               const row = (k, a, c) => `| ${k} | ${n(a)} | ${n(c)} |`;
-              body = ['### ATC autoresearch: training score', '',
+              body = ['### atc-at-home: training score', '',
                 '| | this submission | current best |', '|---|---|---|',
                 row('cost', r.cost, b.cost), row('hard violations', r.hard, b.hard),
-                row('manual 6.11/6.14/2.2', r.manual, b.manual), row('rule violations', r.rule, b.rule),
+                row('approach/taxi (5-9, 3-7)', r.manual, b.manual), row('rule violations', r.rule, b.rule),
                 row('go-arounds', r.go_arounds, b.go_arounds), '',
                 r.beats_best ? '✅ **Beats the current best.** The held-out check runs next and posts its result here.'
                              : '❌ **Does not beat the current best:** ' +

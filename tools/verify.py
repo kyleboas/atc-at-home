@@ -1,6 +1,6 @@
-"""Measure the sim against the procedures and the manual: how closely aircraft track the coded
+"""Measure the sim against the procedures and FAA JO 7110.65: how closely aircraft track the coded
 STAR / SID / approach legs (incl. the RF arcs of RNAV (RNP) Y 28R), whether altitude and speed
-constraints are met at the fixes, parallel approaches (6.11.7-6.11.8), runway crossings (2.3.2),
+constraints are met at the fixes, parallel approaches (5-9-6), runway crossings (3-7-2),
 and frame-to-frame continuity (no jumps beyond the aircraft's speed / turn / climb limits).
 
     python3 tools/verify.py [--split train] [--seeds 0,3,5] [--controller controller]
@@ -139,7 +139,7 @@ class VSim(Sim):
             along = (pos[0] - ac.x) * ux + (pos[1] - ac.y) * uy
             f = 1 - along / L if L > 0 else 1
             (self.track if 0.15 <= f <= 0.85 else self.turns).setdefault((pt, lg["tag"]), []).append(xtk)
-        # parallel approaches (6.11.7-6.11.8)
+        # parallel approaches (5-9-6)
         arr = [a for a in self.aircraft.values() if a.airborne and not a.m["done"] and a.intent == "arrival"
                and a.runway in W.ARR_RUNWAYS and a.appr_cleared and a.alt > 300]
         for i, a in enumerate(arr):
@@ -213,12 +213,12 @@ def main():
     for w in sorted(worst, reverse=True)[:6]:
         print(f"    {w[1]} {w[3]} {w[2]}: {w[4]} ft, window {w[5]}..{w[6]} ({w[0]:.0f} ft off)")
     print(f"  speed limits: {n_spd} checked, {bad_spd} faster by > {SPD_TOL} kt")
-    print("\nPARALLEL APPROACHES 28L/28R (6.11.7-6.11.8)")
+    print("\nPARALLEL APPROACHES 28L/28R (5-9-6)")
     lost = [v for v in par.values() if v < 1000]
     print(f"  pairs within 3 nm before both established: {len(par)}; of these with < 1,000 ft: {len(lost)} "
           f"(min vertical {min(par.values()) if par else '-'} ft)")
     print(f"  pairs side by side (< 3 nm) once both established: {len(side)}")
-    print("\nRUNWAY CROSSINGS (2.3.2)")
+    print("\nRUNWAY CROSSINGS (3-7-2)")
     done = [c for c in cross if c["t_out"] is not None]
     occ = [c for c in cross if c.get("occupied_at_threshold")]
     nxt = [c["next"] for c in done if c.get("next") is not None]

@@ -143,14 +143,14 @@ def cmd_judge(a):
 
 def summary(r):
     if r.get("reason") == "guard":
-        return ("### ATC autoresearch: held-out check\n\nNot run: `controller.py` uses something a controller "
+        return ("### atc-at-home: held-out check\n\nNot run: `controller.py` uses something a controller "
                 "may not (see `tools/ci_guard.py`):\n\n" + "\n".join(f"- `{e}`" for e in r["guard"]))
     if r.get("reason") in ("crash", "main_crash"):
         who = "this submission" if r["reason"] == "crash" else "main"
-        return f"### ATC autoresearch: held-out check\n\nNo score: {who} crashed or timed out (output is not shown)."
+        return f"### atc-at-home: held-out check\n\nNo score: {who} crashed or timed out (output is not shown)."
     row = lambda k, a, b: f"| {k} | {a} | {b} |"  # noqa: E731
     t, tb, h, hm = r["train"], r["train_best"], r["holdout"], r["holdout_main"]
-    lines = ["### ATC autoresearch: held-out check", "",
+    lines = ["### atc-at-home: held-out check", "",
              f"Scored again in a sandbox, and on {r['scenarios']} unseen scenarios that change every week ({r['week']}).", "",
              "| | training | training best | held-out | held-out, main |", "|---|---|---|---|---|"]
     for k in ("cost", "hard", "manual"):

@@ -2,7 +2,7 @@
 
     python3 tools/collab.py status                 # current best, who is trying what, recent results
     python3 tools/collab.py pull-best              # start from the current best on upstream main
-    python3 tools/collab.py start "idea (manual section)"   # claim the idea, then start the experiment
+    python3 tools/collab.py start "idea (FAA 7110.65 paragraph)"   # claim the idea, then start the experiment
     python3 tools/collab.py finish                 # score it, keep or revert, publish the result
     python3 tools/collab.py submit                 # open a pull request if you beat the current best
     python3 tools/collab.py idea "idea"            # leave an idea for someone else to try
@@ -23,7 +23,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UPSTREAM = os.environ.get("ATC_UPSTREAM", "kyleboas/atc-autoresearch")
+UPSTREAM = os.environ.get("ATC_UPSTREAM", "kyleboas/atc-at-home")
 STATE = os.path.join(HERE, ".collab.json")
 JSONL = os.path.join(HERE, "results.jsonl")
 TITLE = re.compile(r"^\[(claim|kept|reverted|crash|idea|expired)(?: ([0-9.]+))?\]\s*(.*)$")
@@ -128,7 +128,7 @@ def cmd_start(args):
     force = "--force" in args
     idea = " ".join(a for a in args if a != "--force").strip()
     if not idea:
-        raise SystemExit('usage: collab.py start "idea, citing the manual section"')
+        raise SystemExit('usage: collab.py start "idea, citing the FAA 7110.65 paragraph"')
     if load_state().get("issue"):
         raise SystemExit("An experiment is already claimed. Run `collab.py finish` first.")
     rows = issues("open") + issues("closed", 200)
@@ -225,7 +225,7 @@ def cmd_submit(_):
 def cmd_idea(args):
     idea = " ".join(args).strip()
     if not idea:
-        raise SystemExit('usage: collab.py idea "idea, citing the manual section"')
+        raise SystemExit('usage: collab.py idea "idea, citing the FAA 7110.65 paragraph"')
     url = run("gh", "issue", "create", "--repo", UPSTREAM, "--title", f"[idea] {idea}"[:250],
               "--body", "Left with `tools/collab.py idea` for anyone to try.")
     print(url)

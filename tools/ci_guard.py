@@ -3,7 +3,7 @@
     python3 tools/ci_guard.py [controller.py]
 
 Allowed imports: a few pure standard-library modules and the atc package's procedures, world
-and command menus. Not allowed: other modules (os, sys, random, time, socket, ...), eval/exec,
+and command set. Not allowed: other modules (os, sys, random, time, socket, ...), eval/exec,
 file access, introspection (getattr, globals, dunder attributes), and changing anything in the
 simulator's modules (assigning to W.x, P.x, C.x). This is a seat belt, not a sandbox: CI also
 runs the code without network, as an unprivileged user, and a maintainer reads every diff.

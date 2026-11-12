@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Join the ATC autoresearch with one command:
+# Join atc-at-home with one command:
 #
-#   curl -fsSL https://raw.githubusercontent.com/kyleboas/atc-autoresearch/main/tools/join.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/kyleboas/atc-at-home/main/tools/join.sh | bash
 #   # or, from a clone:  tools/join.sh [experiments]
 #   ATC_NO_AGENT=1 tools/join.sh      # set up only, without starting an agent
 #
@@ -9,7 +9,7 @@
 # if Claude Code is installed, runs an agent that follows collab.md for N experiments (default
 # 10) on your own account. Other agents: point them at collab.md.
 set -euo pipefail
-UPSTREAM="${ATC_UPSTREAM:-kyleboas/atc-autoresearch}"
+UPSTREAM="${ATC_UPSTREAM:-kyleboas/atc-at-home}"
 N="${1:-10}"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing $1. $2"; exit 1; }; }
@@ -37,7 +37,7 @@ python3 tools/collab.py status | head -25
 if [ -z "${ATC_NO_AGENT:-}" ] && command -v claude >/dev/null 2>&1; then
   echo
   echo "Starting a Claude Code agent for $N experiments (on your account; Ctrl-C to stop) ..."
-  claude -p "You are a contributor to a shared autoresearch project in $(pwd). Read collab.md, program.md, README.md and atc/commands.py, run python3 tools/fetch_manual.py and python3 tools/diagnose.py, then follow collab.md exactly for $N experiments: status, claim one new idea with tools/collab.py start, edit only controller.py, tools/collab.py finish, and tools/collab.py submit whenever finish says you beat the upstream best. Then stop." \
+  claude -p "You are a contributor to a shared autoresearch project in $(pwd). Read collab.md, program.md, README.md and atc/commands.py, run python3 tools/fetch_faa.py and python3 tools/diagnose.py, then follow collab.md exactly for $N experiments: status, claim one new idea with tools/collab.py start, edit only controller.py, tools/collab.py finish, and tools/collab.py submit whenever finish says you beat the upstream best. Then stop." \
     --permission-mode acceptEdits \
     --allowedTools "Read" "Edit" "Grep" "Glob" "Bash(python3:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(gh issue view:*)"
 else

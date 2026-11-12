@@ -4,8 +4,8 @@
     python3 tools/experiment.py finish            # evaluate, keep or revert, record
 
 finish: runs the train evaluation on the edited controller.py. The change is
-KEPT (committed) if hard violations did not increase, the manual intercept /
-handoff / taxi violations (6.11, 6.14, 2.2) did not increase, and cost went
+KEPT (committed) if hard violations did not increase, the approach and taxi
+violations (FAA JO 7110.65 5-9 and 3-7) did not increase, and cost went
 down versus the best kept result; otherwise controller.py is reverted. Either way a row is
 appended to results.tsv / results.jsonl, which the dashboard plots live.
 """
@@ -110,7 +110,7 @@ def main():
         print(f"{status.upper()}: cost {s['cost']} (best was {ref['cost'] if ref else '-'}), "
               f"hard {s['hard']} (best was {ref['hard'] if ref else '-'})")
         print("by position:", s["violations_by_position"])
-        print(f"manual intercept/handoff/taxi violations: {manual(s)} (best {manual(ref) if ref else '-'})")
+        print(f"approach/taxi violations (FAA 5-9, 3-7): {manual(s)} (best {manual(ref) if ref else '-'})")
     else:
         raise SystemExit(__doc__)
 

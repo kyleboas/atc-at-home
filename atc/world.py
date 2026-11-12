@@ -4,13 +4,13 @@ data package in ksfo/ (FAA CIFP 2611, OSM surface, NCT MVA).
 
 Frame: nautical miles from the KSFO ARP, x east, y north (true north at the
 ARP). Headings and courses inside the sim are TRUE; everything the controller
-says or the pilots read back (menu headings, CIFP courses) is MAGNETIC, using
+says or the pilots read back (assigned headings, CIFP courses) is MAGNETIC, using
 the CIFP airport variation (14.0 E). Altitudes are ft MSL (field 13 ft).
 
 Airport configuration: the West Plan, SFO's normal one. Arrivals land 28L and
 28R, departures use 01L and 01R. The 01s physically cross both 28s about
 4,600-5,400 ft past the 28 thresholds, so every 01 departure is an
-intersecting-runway operation against every 28 arrival (manual 3.1.1
+intersecting-runway operation against every 28 arrival (7110.65 3-9-8 / 3-10-4
 "Intersecting"). 28L/28R are 750 ft apart (closely spaced parallels, one
 runway for wake purposes); so are 01L/01R.
 NOT FOR REAL-WORLD NAVIGATION.
@@ -35,11 +35,11 @@ FREQS = {"ground": "121.8", "tower": "120.5", "approach": "135.65", "departure":
 RADAR = ("approach", "departure")
 POS = {"ground": "GND", "tower": "TWR", "approach": "APP", "departure": "DEP", "center": "CTR"}
 
-APPROACH_NM = 50.0                # manual 6.9.1: approach airspace 50 nm, surface to FL180
+APPROACH_NM = 50.0                # approach airspace 50 nm, surface to FL180
 APPROACH_CEILING = 18000
-TOWER_NM = 5.0                    # manual 3.4.2: tower ring, up to 5,000 ft AAL
+TOWER_NM = 5.0                    # tower ring, up to 5,000 ft AAL
 TOWER_CEILING = 5000 + ELEV
-SID_TOP = 5000                    # initial climb until radar contact (manual 6.4.4)
+SID_TOP = 5000                    # initial climb until radar contact
 
 CONFIG = "West Plan"
 ARR_RUNWAYS = ("28L", "28R")
@@ -83,7 +83,7 @@ def bearing_name(x, y):
 
 
 def gs_from_ias(ias, alt):
-    """Manual 6.15.3: ground speed grows with altitude (no wind). ~2%/1000 ft (TAS)."""
+    """True airspeed: ground speed grows with altitude (no wind), ~2%/1000 ft."""
     return ias * (1 + 0.018 * max(0.0, alt) / 1000)
 
 
@@ -148,7 +148,7 @@ class Runway:
 
 RUNWAYS = {i: Runway(i) for i in sorted(K.RUNWAYS)}
 PAVEMENTS = sorted({r.pavement for r in RUNWAYS.values()})
-IN_USE = {}                              # pavement -> designator in the direction in use (2.3.1)
+IN_USE = {}                              # pavement -> designator in the direction in use (3-7-2)
 for _i in ARR_RUNWAYS + DEP_RUNWAYS:
     IN_USE[RUNWAYS[_i].pavement] = _i
 
