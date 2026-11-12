@@ -361,8 +361,12 @@ class Ground:
                     continue
                 r = o.get("groute") or []
                 if o["phase"] in ("taxiing", "taxi_in") and r:
+                    along, p = 0.0, (o["x"], o["y"])
                     for u, v in zip(r, r[1:]):
-                        pen_edge[(v, u)] = 0.6               # we would meet it head-on
+                        along += dist(p, W.NODES[v])
+                        p = W.NODES[v]
+                        # we would meet it head-on; near it there is no room to give way
+                        pen_edge[(v, u)] = max(pen_edge.get((v, u), 0.0), 3.0 if along < 0.4 else 0.6)
                 if o["phase"] in ("holding_short", "clear", "pushed", "push_hold") or \
                         (o["phase"] in ("taxiing", "taxi_in") and o["gs"] < 1):
                     if o.get("gnode"):
