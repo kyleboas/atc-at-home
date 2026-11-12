@@ -97,6 +97,7 @@ jobs:
     permissions:
       actions: write
       contents: write
+      issues: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -123,6 +124,11 @@ jobs:
             echo "" >> body.md; echo "A maintainer will review the code and merge." >> body.md
           fi
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          if [ "$ok" = yes ] && [ "$AUTOMERGE" != true ]; then
+            # the one thing a maintainer needs to act on: label it and ask the owner for a review
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label ready-for-review || true
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-reviewer "$GITHUB_REPOSITORY_OWNER" || true
+          fi
           if [ "$ok" = yes ] && [ "$AUTOMERGE" = true ]; then
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$SHA"
             # merges made with GITHUB_TOKEN do not trigger push workflows, so start the leaderboard here
