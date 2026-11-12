@@ -109,6 +109,19 @@ def cmd_status(_):
         print(f"  {r['kind']:8} {r['cost'] or '':>8}  {r['who']}: {r['idea']}")
 
 
+def exp_branch():
+    """`exp`, unless another git worktree has it checked out (git refuses to check out a branch
+    that is in use elsewhere): then this worktree's own branch, or exp-<directory name>."""
+    here = os.path.realpath(HERE)
+    for block in run("git", "worktree", "list", "--porcelain").split("\n\n"):
+        lines = block.splitlines()
+        path = next((ln[9:] for ln in lines if ln.startswith("worktree ")), None)
+        if "branch refs/heads/exp" in lines and path and os.path.realpath(path) != here:
+            cur = run("git", "branch", "--show-current")
+            return cur if cur and cur != "exp" else "exp-" + os.path.basename(here)[:12]
+    return "exp"
+
+
 def cmd_pull_best(args):
     if run("git", "status", "--porcelain", "--", "controller.py"):
         raise SystemExit("controller.py has uncommitted changes. Finish or revert your experiment first.")
@@ -119,8 +132,9 @@ def cmd_pull_best(args):
     if ahead != "0" and "--force" not in args:
         raise SystemExit(f"You have {ahead} kept change(s) to controller.py that are not upstream. Run "
                          "`python3 tools/collab.py submit` first (or add --force to drop them).")
-    run("git", "checkout", "-q", "-B", "exp", f"{up}/main")
-    print(f"On branch exp at {up}/main ({run('git', 'rev-parse', '--short', 'HEAD')}). Scoring the baseline...")
+    branch = exp_branch()
+    run("git", "checkout", "-q", "-B", branch, f"{up}/main")
+    print(f"On branch {branch} at {up}/main ({run('git', 'rev-parse', '--short', 'HEAD')}). Scoring the baseline...")
     print(run(sys.executable, "tools/experiment.py", "baseline"))
 
 

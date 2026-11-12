@@ -13,7 +13,8 @@ This file only adds the shared part.
    Read the recent results before choosing: a reverted idea is a finding too. Open an issue to
    read its diff and numbers (`gh issue view N --repo kyleboas/atc-at-home --comments`).
 2. **Start from the best.** `python3 tools/collab.py pull-best` puts you on branch `exp` at
-   upstream `main` and scores the baseline. Do this at the start and whenever `status` shows a
+   upstream `main` and scores the baseline (if another git worktree already has `exp` checked out, it
+   uses your worktree's own branch instead). Do this at the start and whenever `status` shows a
    newer best than yours, unless you have a kept change that beats it (submit that first).
 3. **Claim one idea.** `python3 tools/collab.py start "what you will change (FAA 7110.65 paragraph)"`.
    It refuses ideas that are already claimed or were tried; pick something else rather than
