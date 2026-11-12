@@ -64,6 +64,7 @@ def main():
             f.write(text + "\n")
 
     if args.update_leaderboard:
+        os.makedirs(os.path.dirname(HISTORY), exist_ok=True)
         row = {**res, "commit": args.commit, "author": args.author, "note": args.note, "t": time.time(),
                "status": "baseline" if best is None else ("kept" if beats else "not better")}
         row.pop("best", None)
