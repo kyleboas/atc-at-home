@@ -5,47 +5,97 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KSFO AI ATC replay</title>
 <style>
-  :root { --bg:#0b0e12; --panel:#12161c; --line:#262c35; --text:#d6dde6; --muted:#7d8590;
-          --gnd:#8b949e; --twr:#3fb950; --app:#f0883e; --dep:#58a6ff; --ctr:#bc8cff; --bad:#f85149; --warn:#d29922; }
+  /* Libero UI kit, dark theme (libero/webapp/style.css + flat-ui.css): tokens and the components below are its own.
+     Position colours (--gnd … --ctr) are this player's data colours, as on the scope. */
+  :root { color-scheme:dark;
+          --bg:#1c1c1e; --line:#38383a; --rule:#636366; --fg:#f2f2f7; --fg2:#c7c7cc; --dim:#98989f; --acc:#d1d1d6; --acc2:#8e8e93;
+          --card:#2c2c2e; --hd:#2c2c2e; --elev:#2c2c2e; --bd:#48484a; --inbd:#636366; --soft:#3a3a3c; --alt:#232325;
+          --accbg:#48484a; --hov:#5a5a5e; --link:#7aa2ff; --action-ink:#60b8f5; --sel:#574f1e; --selbd:#7a6f2a;
+          --bad:#ff6961; --badbg:#4a2020; --warn:#e0b341;
+          --gnd:#8b949e; --twr:#3fb950; --app:#f0883e; --dep:#58a6ff; --ctr:#bc8cff;
+          --sans:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+          --mono:ui-monospace, Menlo, monospace; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 ui-monospace, Menlo, monospace;
+  body { margin:0; background:var(--bg); color:var(--fg); font:12px/1.2 var(--sans); -webkit-font-smoothing:antialiased;
          display:grid; grid-template-columns: 1fr 460px; grid-template-rows: auto 1fr; height:100vh; }
-  header { grid-column:1/3; display:flex; flex-wrap:wrap; gap:14px; align-items:center; padding:7px 12px;
-           border-bottom:1px solid var(--line); background:var(--panel); }
-  header b { color:var(--text); font-weight:600; }
-  .muted { color:var(--muted); }
-  a { color:#58a6ff; }
-  #wrap { position:relative; min-height:0; }
-  canvas { width:100%; height:100%; display:block; }
+  header { grid-column:1/3; display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; padding:10px 14px;
+           border-bottom:1px solid var(--line); background:var(--bg); font-size:13px; color:var(--fg2); }
+  header b { color:var(--fg); font-weight:700; }
+  #title { font-size:15px; }
+  .muted, .dim { color:var(--dim); }
+  a { color:var(--link); }
+  #wrap { position:relative; min-height:0; background:#000; }
+  canvas { width:100%; height:100%; display:block; cursor:crosshair; touch-action:none; }
   #side { border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
-  .bar { padding:7px 10px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .bar input[type=range] { flex:1; min-width:120px; }
-  button, select { background:#1b2129; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 8px; font:inherit; }
-  button.on { border-color:#58a6ff; color:#58a6ff; }
-  #log { overflow:auto; flex:1; padding:4px 0; font-size:12px; }
-  .row { padding:1px 10px; white-space:pre-wrap; cursor:pointer; }
-  .row:hover { background:#161b22; }
-  .row .t { color:var(--muted); }
+  .bar { flex-shrink:0; padding:8px 12px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .bar input[type=range] { flex:1; min-width:120px; accent-color:var(--acc2); }
+  #clock { font-variant-numeric:tabular-nums; font-size:13px; }
+
+  /* buttons: default (grey fill) and .g (secondary); flat corners, no shadow */
+  button { background:var(--accbg); color:#fff; border:0; border-radius:4px; padding:5px 10px; cursor:pointer; font:inherit; font-size:13px; }
+  button:hover { background:var(--hov); }
+  button.g { background:var(--elev); color:var(--fg); border:1px solid var(--bd); }
+  button.g:hover { background:var(--hov); color:#fff; }
+  button:focus-visible { outline:2px solid var(--action-ink); outline-offset:2px; }
+  select { background:var(--bg); color:var(--fg); border:1px solid var(--inbd); border-radius:4px; padding:3px 5px; font:inherit; font-size:13px; }
+
+  /* segmented (.lf-seg): the chosen one on the quiet selection grey */
+  .lf-seg { display:inline-flex; flex-wrap:wrap; border:1px solid var(--bd); border-radius:4px; overflow:hidden; }
+  .lf-seg button { background:var(--bg); color:var(--fg); border:0; border-radius:0; border-right:1px solid var(--bd); padding:6px 12px; }
+  .lf-seg button:last-child { border-right:0; }
+  .lf-seg button.on { background:var(--soft); }
+  .lf-seg button:not(.on):hover { background:var(--alt); }
+
+  /* checkboxes (.chk): the system's own control */
+  .chk { display:inline-flex; align-items:center; gap:5px; font-size:13px; color:var(--fg); cursor:pointer; }
+  .chk input { margin:0; }
+  #filters { gap:6px 14px; }
+
+  /* layers: a secondary button on the map, opening a settings card (.gcard .srow) that keeps overlay depth */
+  #layerBtn { position:absolute; top:10px; right:10px; z-index:2; }
+  #layerBtn[aria-expanded=true] { background:var(--soft); }
+  #layers { position:absolute; top:46px; right:10px; z-index:2; width:min(300px, calc(100% - 20px)); max-height:calc(100% - 56px); overflow:auto;
+            padding:12px 14px; background:var(--bg); border:1px solid var(--rule); border-radius:4px;
+            box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; }
+  #layers.open { display:block; }
+  #layers h4 { margin:12px 0 2px; font-size:15px; color:var(--acc); }
+  #layers h4:first-child { margin-top:0; }
+  .srow { display:flex; align-items:center; gap:16px; padding:9px 0; border-top:1px solid var(--soft); font-size:13px; cursor:pointer; }
+  #layers h4 + .srow { border-top:0; padding-top:4px; }
+  .srow > span { flex:1; min-width:0; }
+  .srow > span .dim { display:block; margin-top:2px; font-size:12px; }
+  .srow input[type=checkbox] { width:18px; height:18px; margin:0; flex:none; }
+  #layers .foot { display:flex; justify-content:flex-end; gap:6px; margin-top:10px; padding-top:12px; border-top:1px solid var(--line); }
+
+  /* transcript */
+  #log { overflow:auto; flex:1; padding:4px 0; font:12px/1.4 var(--mono); }
+  .row { padding:1px 12px; white-space:pre-wrap; cursor:pointer; }
+  .row:hover { background:var(--alt); }
+  .row .t { color:var(--dim); }
   .GND .who { color:var(--gnd); } .TWR .who { color:var(--twr); } .APP .who { color:var(--app); } .DEP .who { color:var(--dep); } .CTR .who { color:var(--ctr); }
-  .row.hard { color:var(--bad); background:#f8514912; } .row.rule { color:var(--warn); } .row.service { color:var(--muted); }
+  .row.hard { color:var(--bad); background:var(--badbg); } .row.rule { color:var(--warn); } .row.service { color:var(--dim); }
   .row.invalid { color:var(--bad); } .row.future { opacity:.22; }
-  .row.sel { background:#1f6feb26; box-shadow: inset 3px 0 0 #58a6ff; }
-  .row.talk { background:#d2992226; }
-  #selcard { padding:6px 10px; border-bottom:1px solid var(--line); font-size:12px; display:none; background:#0f1a2b; }
-  #selcard b { color:#58a6ff; }
-  canvas { cursor:crosshair; touch-action:none; }
+  #selcard { flex-shrink:0; padding:8px 12px; border-bottom:1px solid var(--line); font-size:13px; line-height:1.4; display:none; background:var(--hd);
+             align-items:flex-start; gap:10px; }
+  #selinfo { flex:1; min-width:0; }
+  #selclear { flex:none; }
+  #selcard b { color:var(--fg); }
+
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin:0 4px 0 6px; }
   @media (max-width: 820px) {
-    body { grid-template-columns: 1fr; grid-template-rows: auto 52vh minmax(0, 1fr); height: 100dvh; font-size: 12px; }
-    header { grid-column: 1; gap: 6px 10px; padding: 6px 8px; font-size: 11px; }
+    /* a phone scrolls the page: the map keeps its height, the transcript gets its own tall box below the controls */
+    body { display: block; height: auto; }
+    #wrap { height: 52svh; }
+    #log { flex: none; height: 75svh; }
+    header { grid-column: 1; gap: 4px 10px; padding: 8px 10px; font-size: 12px; }
+    #title { font-size: 13px; }
     header > span:nth-child(3) { display: none; }          /* colour legend: no room on a phone */
-    #side { border-left: 0; border-top: 1px solid var(--line); }
-    .bar { padding: 5px 8px; gap: 6px; }
-    button, select { padding: 6px 10px; }
+    #side { display: block; border-left: 0; border-top: 1px solid var(--line); }
+    .bar { padding: 6px 10px; gap: 6px; }
     #log { font-size: 11px; }
-    #selcard { font-size: 11px; }
+    #selcard { font-size: 12px; }
+    .hint { display:none; }
   }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
-  #layers label { color:var(--muted); }
 </style>
 </head>
 <body>
@@ -57,36 +107,45 @@
     <span class="dot" style="background:var(--ctr)"></span>center <span class="dot" style="background:var(--bad)"></span>violation</span>
   <span id="back"></span>
 </header>
-<div id="wrap"><canvas id="c"></canvas></div>
+<div id="wrap"><canvas id="c"></canvas>
+  <button id="layerBtn" class="g" aria-expanded="false" aria-controls="layers">Layers</button>
+  <div id="layers" role="dialog" aria-label="Map layers">
+    <h4>Airspace</h4>
+    <label class="srow"><span>STARs<span class="dim">Arrival routes</span></span><input type="checkbox" data-l="star" checked></label>
+    <label class="srow"><span>Approaches<span class="dim">Final approaches and their transitions</span></span><input type="checkbox" data-l="approach" checked></label>
+    <label class="srow"><span>SIDs<span class="dim">Departure routes</span></span><input type="checkbox" data-l="sid" checked></label>
+    <label class="srow"><span>Fixes<span class="dim">Waypoints and their names</span></span><input type="checkbox" data-l="fixes" checked></label>
+    <label class="srow"><span>MVA<span class="dim">Minimum vectoring altitudes</span></span><input type="checkbox" data-l="mva" checked></label>
+    <h4>Airport</h4>
+    <label class="srow"><span>Taxiways</span><input type="checkbox" data-l="taxi" checked></label>
+    <label class="srow"><span>Taxiway names</span><input type="checkbox" data-l="twyname" checked></label>
+    <label class="srow"><span>Gates<span class="dim">Stand numbers, closest zoom only</span></span><input type="checkbox" data-l="stands"></label>
+    <h4>Aircraft</h4>
+    <label class="srow"><span>Data blocks<span class="dim">Altitude, speed and state under the callsign</span></span><input type="checkbox" data-l="tags" checked></label>
+    <div class="foot"><button class="g" id="layersNone">Hide all</button><button class="g" id="layersAll">Show all</button></div>
+  </div>
+</div>
 <div id="side">
   <div class="bar">
     <button id="play">Play</button>
-    <select id="speed"><option>4</option><option selected>16</option><option>32</option><option>64</option><option>128</option></select>
+    <select id="speed" aria-label="Playback speed"><option value="4">4×</option><option value="16" selected>16×</option><option value="32">32×</option><option value="64">64×</option><option value="128">128×</option></select>
     <input type="range" id="scrub" min="0" value="0">
     <span id="clock">00:00</span>
   </div>
   <div class="bar">
-    view <button id="vAir" class="on">airspace</button><button id="vTerm">terminal</button><button id="vField">field</button><button id="vGnd">ground</button>
-    <span class="muted">· scroll to zoom</span>
-  </div>
-  <div class="bar" id="layers">
-    <label><input type="checkbox" data-l="star" checked> STARs</label>
-    <label><input type="checkbox" data-l="approach" checked> approaches</label>
-    <label><input type="checkbox" data-l="sid" checked> SIDs</label>
-    <label><input type="checkbox" data-l="mva" checked> MVA</label>
-    <label><input type="checkbox" data-l="taxi" checked> taxiways</label>
+    <div class="lf-seg"><button id="vAir" class="on">Airspace</button><button id="vTerm">Terminal</button><button id="vField">Field</button><button id="vGnd">Ground</button></div>
+    <span class="muted hint">Scroll to zoom</span>
   </div>
   <div class="bar" id="filters">
-    <label><input type="checkbox" data-f="GND" checked> GND</label>
-    <label><input type="checkbox" data-f="TWR" checked> TWR</label>
-    <label><input type="checkbox" data-f="APP" checked> APP</label>
-    <label><input type="checkbox" data-f="DEP" checked> DEP</label>
-    <label><input type="checkbox" data-f="pilot" checked> pilots</label>
-    <label><input type="checkbox" data-f="mon" checked> monitor</label>
-    <label><input type="checkbox" id="fFollow" checked> follow</label>
-    <label><input type="checkbox" id="fSel"> selected only</label>
+    <label class="chk"><input type="checkbox" data-f="GND" checked>GND</label>
+    <label class="chk"><input type="checkbox" data-f="TWR" checked>TWR</label>
+    <label class="chk"><input type="checkbox" data-f="APP" checked>APP</label>
+    <label class="chk"><input type="checkbox" data-f="DEP" checked>DEP</label>
+    <label class="chk"><input type="checkbox" data-f="pilot">Pilots</label>
+    <label class="chk"><input type="checkbox" data-f="mon" checked>Monitor</label>
+    <label class="chk"><input type="checkbox" id="fFollow" checked>Follow</label>
   </div>
-  <div id="selcard"></div>
+  <div id="selcard"><div id="selinfo"></div><button class="g" id="selclear">Show everyone</button></div>
   <div id="log"></div>
 </div>
 <script>
@@ -118,6 +177,7 @@ tr.forEach(l => {
 });
 
 let idx = 0, frac = 0, playing = false, last = 0, acc = 0;
+let followT = null, followSel = null;     // replay time and selection the transcript last followed
 let sel = null, drawn = [], lastTalk = {};                 // selected callsign; screen positions of drawn targets
 const POSCOL = { GND:'#8b949e', TWR:'#3fb950', APP:'#f0883e', DEP:'#58a6ff', CTR:'#bc8cff', ATC:'#bc8cff' };
 const TALK_S = 6;                            // a transmission "lights up" its aircraft for 6 s
@@ -139,65 +199,92 @@ function line(pts, color, dash, w) {
   ctx.beginPath(); pts.forEach((p, i) => { const q = P(p[0], p[1]); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }); ctx.stroke(); ctx.setLineDash([]);
 }
 const layer = () => { const o = {}; document.querySelectorAll('#layers input').forEach(i => o[i.dataset.l] = i.checked); return o; };
-const PROC = { star:['#6b4f2a',[6,5]], transition:['#7a5f34',[4,4]], approach:['#2f6f52',null], sid:['#24496e',[5,5]] };
+// a STARS-style scope: black, the video map in greys, tracks and data blocks in the scope's own colours
+const SCOPE = { bg:'#000', map:'#7a7a7a', mapDim:'#4a4a4a', mapFaint:'#262626', ring:'#3a3a3a', text:'#9a9a9a',
+                db:'#6ee36e', dbSel:'#ffffff', hist:'#2c46ff', ptl:'#bdbdbd', alert:'#ff3b30' };
+const FONT = px => `bold ${px*devicePixelRatio}px ui-monospace, Menlo, Consolas, monospace`;
+const PROC = { star:[SCOPE.mapDim,[2,5]], transition:[SCOPE.mapDim,[2,5]], approach:[SCOPE.map,null], sid:[SCOPE.mapDim,[8,6]] };
 function drawWorld(k) {
   const dpr = devicePixelRatio, L = layer();
+  ctx.font = FONT(9);
   // NorCal TRACON minimum vectoring altitudes (FUS3)
   if (L.mva) for (const m of W.mva) {
-    line([...m.ring, m.ring[0]], '#1a222c', null, 1);
+    line([...m.ring, m.ring[0]], SCOPE.mapFaint, null, 1);
     if (k > 9) { let sx = 0, sy = 0; m.ring.forEach(p => { sx += p[0]; sy += p[1]; });
-      const q = P(sx / m.ring.length, sy / m.ring.length); ctx.fillStyle = '#3b4552'; ctx.fillText(String(m.mva / 100), q[0] - 8*dpr, q[1]); }
+      const q = P(sx / m.ring.length, sy / m.ring.length); ctx.fillStyle = '#3c3c3c'; ctx.fillText(String(m.mva / 100), q[0] - 8*dpr, q[1]); }
   }
-  // range rings about the ARP: tower 5 nm, 10/20/30, approach airspace 50 nm
-  for (const [r, col] of [[W.airspace_nm, '#2d343e'], [W.tower_nm, '#1f3a26'], [10, '#161b21'], [20, '#161b21'], [30, '#161b21']]) {
-    const [x, y] = P(0, 0); ctx.strokeStyle = col; ctx.lineWidth = dpr; ctx.beginPath(); ctx.arc(x, y, r*k, 0, 7); ctx.stroke();
-  }
+  // range rings every 10 nm about the ARP out to the approach airspace, the tower's 5 nm ring and the airspace edge a shade brighter
+  { const [x, y] = P(0, 0); ctx.lineWidth = dpr;
+    for (let r = 10; r < W.airspace_nm; r += 10) { ctx.strokeStyle = SCOPE.ring; ctx.beginPath(); ctx.arc(x, y, r*k, 0, 7); ctx.stroke(); }
+    for (const r of [W.tower_nm, W.airspace_nm]) { ctx.strokeStyle = '#555'; ctx.beginPath(); ctx.arc(x, y, r*k, 0, 7); ctx.stroke(); } }
   // procedures as coded in CIFP (RF legs as arcs, holds as racetracks; missed approaches dashed)
   for (const p of W.procs) {
     const on = p.kind === 'transition' ? L.approach : L[p.kind]; if (!on) continue;
     const [col, dash] = PROC[p.kind];
-    line(p.pts, col, dash, p.kind === 'approach' ? 1.5 : 1);
-    if (p.missed) line(p.missed, '#4b3a66', [2, 4]);
-    for (const h of p.holds) line(h, '#4b3a66', [2, 3]);
+    line(p.pts, col, dash, 1);
+    if (p.missed) line(p.missed, SCOPE.mapDim, [6, 4]);
+    for (const h of p.holds) line(h, SCOPE.mapDim, [3, 3]);
   }
-  // fixes and constraint labels
+  // fixes: small open triangles, names and constraints in the map grey
   const lab = {};
   for (const p of W.procs) { const on = p.kind === 'transition' ? L.approach : L[p.kind]; if (on) for (const [f, t] of p.labels) (lab[f] ||= new Set()).add(t); }
-  for (const [name, [fx, fy]] of Object.entries(W.fixes)) {
+  if (L.fixes) for (const [name, [fx, fy]] of Object.entries(W.fixes)) {
     const [x, y] = P(fx, fy); if (x < -40 || y < -40 || x > c.width + 40 || y > c.height + 40) continue;
-    ctx.fillStyle = '#6e7681';
-    ctx.beginPath(); ctx.moveTo(x, y - 3.5*dpr); ctx.lineTo(x + 3.5*dpr, y + 2.5*dpr); ctx.lineTo(x - 3.5*dpr, y + 2.5*dpr); ctx.closePath(); ctx.fill();
-    if (k > 5) { ctx.fillStyle = '#8b949e'; ctx.fillText(name, x + 5*dpr, y + 3*dpr); }
-    if (k > 14 && lab[name]) { ctx.fillStyle = '#a07a4a'; ctx.fillText([...lab[name]].join(' / '), x + 5*dpr, y + 13*dpr); }
+    ctx.strokeStyle = SCOPE.map; ctx.lineWidth = dpr;
+    ctx.beginPath(); ctx.moveTo(x, y - 3*dpr); ctx.lineTo(x + 3*dpr, y + 2.2*dpr); ctx.lineTo(x - 3*dpr, y + 2.2*dpr); ctx.closePath(); ctx.stroke();
+    if (k > 5) { ctx.fillStyle = SCOPE.map; ctx.fillText(name, x + 5*dpr, y + 3*dpr); }
+    if (k > 14 && lab[name]) { ctx.fillStyle = '#5a5a5a'; ctx.fillText([...lab[name]].join(' / '), x + 5*dpr, y + 13*dpr); }
   }
   // taxiways (OSM) at ground zoom, with names
   if (L.taxi && k > 60) {
     const named = {};
     for (const [name, kind, g] of W.taxi) {
-      line(g, kind === 0 ? '#5c4d1f' : (kind === 1 ? '#3a3420' : '#30363d'), null, kind === 0 ? 2.5 : 1);
+      line(g, kind === 0 ? '#4c4c4c' : (kind === 1 ? '#333' : '#2a2a2a'), null, kind === 0 ? 2.5 : 1);
       if (name && kind === 0) (named[name] ||= []).push(g[Math.floor(g.length / 2)]);
     }
-    if (k > 140) { ctx.fillStyle = '#c9a227'; ctx.font = `${9*dpr}px ui-monospace, Menlo, monospace`;
-      for (const [name, pts] of Object.entries(named)) for (let i = 0; i < pts.length; i += Math.max(1, Math.floor(pts.length / 3))) {
+    if (k > 140) { ctx.fillStyle = SCOPE.map;
+      if (L.twyname) for (const [name, pts] of Object.entries(named)) for (let i = 0; i < pts.length; i += Math.max(1, Math.floor(pts.length / 3))) {
         const q = P(pts[i][0], pts[i][1]); ctx.fillText(name, q[0] + 3*dpr, q[1] - 3*dpr); }
-      if (k > 400) { ctx.fillStyle = '#6e7681'; for (const [n, p] of Object.entries(W.stands)) { const q = P(p[0], p[1]); ctx.fillText(n, q[0] + 3*dpr, q[1] + 3*dpr); } }
-      ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`; }
+      if (L.stands && k > 400) { ctx.fillStyle = '#5a5a5a'; for (const [n, p] of Object.entries(W.stands)) { const q = P(p[0], p[1]); ctx.fillText(n, q[0] + 3*dpr, q[1] + 3*dpr); } } }
   }
   // all runways, to scale (in-use ends labelled)
+  ctx.font = FONT(10);
   for (const r of W.runways) {
     const w = Math.max(2*dpr, r.width_ft / 6076.12 * k);
     const a = P(r.start[0], r.start[1]), b = P(r.end[0], r.end[1]);
-    ctx.strokeStyle = r.in_use.length ? '#9aa4b0' : '#5a626d'; ctx.lineWidth = w; ctx.lineCap = 'butt';
+    ctx.strokeStyle = r.in_use.length ? '#8a8a8a' : '#4f4f4f'; ctx.lineWidth = w; ctx.lineCap = 'butt';
     ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-    if (k > 25) { ctx.fillStyle = '#c9d1d9';
-      for (const id of [r.a, r.b]) { const q = P(r.thr[id][0], r.thr[id][1]); ctx.fillStyle = r.in_use.includes(id) ? '#e6edf3' : '#6e7681'; ctx.fillText(id, q[0] + 4*dpr, q[1] + 12*dpr); } }
+    if (k > 25) for (const id of [r.a, r.b]) { const q = P(r.thr[id][0], r.thr[id][1]); ctx.fillStyle = r.in_use.includes(id) ? '#d0d0d0' : '#5a5a5a'; ctx.fillText(id, q[0] + 4*dpr, q[1] + 12*dpr); }
   }
-  if (k > 25) { const q = P(W.tower[0], W.tower[1]); ctx.fillStyle = '#3fb950'; ctx.fillRect(q[0] - 2*dpr, q[1] - 2*dpr, 4*dpr, 4*dpr); }
+  if (k > 25) { const q = P(W.tower[0], W.tower[1]); ctx.strokeStyle = SCOPE.map; ctx.lineWidth = dpr; ctx.strokeRect(q[0] - 2.5*dpr, q[1] - 2.5*dpr, 5*dpr, 5*dpr); }
+  compass();
+}
+// the bearing scale round the edge of the scope: magnetic bearings from the range-ring centre (the ARP, or the
+// middle of the screen when the ARP is off it), a long tick every 10 degrees with its number, a short one every 5
+function compass() {
+  const dpr = devicePixelRatio, W2 = c.width, H2 = c.height;
+  let [cx, cy] = P(0, 0); if (cx < 0 || cy < 0 || cx > W2 || cy > H2) { cx = W2 / 2; cy = H2 / 2; }
+  ctx.font = FONT(10); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.strokeStyle = SCOPE.text; ctx.fillStyle = SCOPE.text; ctx.lineWidth = dpr;
+  for (let m = 0; m < 360; m += 5) {
+    const th = (m + W.magvar) * Math.PI / 180, dx = Math.sin(th), dy = -Math.cos(th);
+    const t = Math.min(dx > 0 ? (W2 - cx) / dx : dx < 0 ? -cx / dx : Infinity, dy > 0 ? (H2 - cy) / dy : dy < 0 ? -cy / dy : Infinity);
+    const ex = cx + dx * t, ey = cy + dy * t, len = (m % 10 ? 4 : 9) * dpr;
+    ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - dx * len, ey - dy * len); ctx.stroke();
+    if (m % 10 === 0) { const g = 20 * dpr; ctx.fillText(String(m === 0 ? 360 : m).padStart(3, '0'), ex - dx * g * 1.15, ey - dy * g); }
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+// track history: where each aircraft was on earlier frames (frames are 2 s apart), cached per frame
+const histCache = new Map();
+function posAt(i) {
+  if (i < 0) return null;
+  let m = histCache.get(i);
+  if (!m) { m = new Map(frames[i][1].map(a => [a[0], [a[1], a[2]]])); histCache.set(i, m); if (histCache.size > 400) histCache.delete(histCache.keys().next().value); }
+  return m;
 }
 function draw() {
   const dpr = devicePixelRatio, [, , k] = P(0, 0);
-  ctx.fillStyle = '#0b0e12'; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
+  ctx.fillStyle = SCOPE.bg; ctx.fillRect(0, 0, c.width, c.height);
   drawWorld(k);
   const [t0, acs0] = frames[idx];
   // frames are 2 s apart: draw positions interpolated between this frame and the next
@@ -214,69 +301,92 @@ function draw() {
   }
   lastTalk = talking;
   drawn = [];
-  ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
+  const L = layer();
+  const share = Math.floor(performance.now() / 2500) % 2;    // data block line 2 time-shares, as on a real scope
   for (const [cs, x, y, alt, gs, leg, intent, wake, freq, hdg, hdgA, altA, rwy, type, nfix] of acs) {
     const [px, py] = P(x, y);
     if (px < -50 || py < -50 || px > c.width + 50 || py > c.height + 50) continue;
     const isBad = (bad[cs] || []).some(bt => Math.abs(bt - t) <= 20);
-    const col = isBad ? '#f85149' : (FREQ[freq] || '#8b949e');
     const air = !GROUND.has(leg) && !RUNWAY.has(leg);
     const ground = GROUND.has(leg);
     if (ground && k < 60) continue;
     if (RUNWAY.has(leg) && k < 12) continue;
     const isSel = cs === sel;
     drawn.push([cs, px, py]);
-    ctx.fillStyle = col; ctx.strokeStyle = col;
-    if (air) {
-      const r = (wake === 'H' || wake === 'J' ? 4 : 3) * dpr; ctx.fillRect(px - r, py - r, 2*r, 2*r);
-      const h = hdg * Math.PI / 180, len = gs / 60 * k;          // one-minute leader line
-      ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.sin(h)*len, py - Math.cos(h)*len); ctx.stroke();
-    } else { ctx.beginPath(); ctx.arc(px, py, 3*dpr, 0, 7); ctx.fill(); }
-    if (isBad) { ctx.lineWidth = 2*dpr; ctx.beginPath(); ctx.arc(px, py, 12*dpr, 0, 7); ctx.stroke(); }
-    // the callsign is the only indicator: selected = blue highlight, talking = speaker's colour + ◀
-    const label = cs + (talking[cs] ? ' ◀' : '');
-    if (isSel) {
-      ctx.font = `bold ${10*dpr}px ui-monospace, Menlo, monospace`;
-      const tw = ctx.measureText(label).width;
-      ctx.fillStyle = '#1f6feb'; ctx.fillRect(px + 6*dpr, py - 13*dpr, tw + 4*dpr, 13*dpr);
+    // history trail: five returns, 4 s apart, fading
+    for (let h = 5; h >= 1; h--) {
+      const m = posAt(idx - 2*h), q = m && m.get(cs); if (!q) continue;
+      const [hx, hy] = P(q[0], q[1]); ctx.globalAlpha = 1 - h * 0.15; ctx.fillStyle = SCOPE.hist;
+      ctx.beginPath(); ctx.arc(hx, hy, 2.6*dpr, 0, 7); ctx.fill();
     }
-    ctx.fillStyle = isSel ? '#ffffff' : (talking[cs] || '#d6dde6');
-    ctx.fillText(label, px + 8*dpr, py - 3*dpr);
-    ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
-    ctx.fillStyle = '#7d8590';
-    ctx.fillText(air ? `${String(Math.round(alt/100)).padStart(3,'0')} ${gs} ${leg}${nfix ? ' ' + nfix : ''}` : leg.replace('_',' ') + (nfix ? ' ' + nfix : ''), px + 8*dpr, py + 9*dpr);
+    ctx.globalAlpha = 1;
+    // predicted track line (one minute) for airborne tracks
+    if (air) {
+      const h = hdg * Math.PI / 180, len = gs / 60 * k;
+      ctx.strokeStyle = SCOPE.ptl; ctx.globalAlpha = .55; ctx.lineWidth = dpr;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.sin(h)*len, py - Math.cos(h)*len); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    // position symbol: the controlling position's letter, in that position's colour
+    ctx.font = FONT(air ? 11 : 9); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = isBad ? SCOPE.alert : (FREQ[freq] || SCOPE.text);
+    ctx.fillText((freq && freq !== '-' ? freq : '·').toUpperCase(), px, py + 0.5*dpr);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    // leader line up and to the right, then the data block
+    const dbCol = isBad ? SCOPE.alert : isSel ? SCOPE.dbSel : SCOPE.db;
+    const lx = px + 10*dpr, ly = py - 10*dpr;
+    ctx.strokeStyle = dbCol; ctx.lineWidth = dpr;
+    ctx.beginPath(); ctx.moveTo(px + 5*dpr, py - 5*dpr); ctx.lineTo(lx, ly); ctx.stroke();
+    const bx = lx + 3*dpr;
+    ctx.font = FONT(10); ctx.fillStyle = dbCol;
+    ctx.fillText(cs + (talking[cs] ? ' ◀' : '') + (isBad ? ' CA' : ''), bx, ly - 2*dpr);
+    if (!L.tags && !isSel) continue;           // data blocks off: callsign only (the selected aircraft keeps its block)
+    const spd = String(Math.round(gs / 10)).padStart(2, '0');
+    ctx.fillText(air ? (share ? `${String(Math.round(alt/100)).padStart(3,'0')} ${spd} ${wake || ''}` : `${type || '----'} ${rwy || ''}`)
+                     : leg.replace('_',' ').toUpperCase() + (nfix ? ' ' + nfix : ''), bx, ly + 9*dpr);
     // assigned heading / altitude from approach or departure (third line of the data block)
     if (air && (hdgA >= 0 || altA >= 0)) {
-      ctx.fillStyle = '#e3b341';
       const arrow = altA >= 0 ? (altA > alt + 100 ? '↑' : altA < alt - 100 ? '↓' : '=') : '';
-      ctx.fillText(`${hdgA >= 0 ? 'H' + String(hdgA).padStart(3, '0') + ' ' : ''}${altA >= 0 ? arrow + String(Math.round(altA/100)).padStart(3,'0') : ''}`, px + 8*dpr, py + 20*dpr);
+      ctx.fillText(`${hdgA >= 0 ? 'H' + String(hdgA).padStart(3, '0') + ' ' : ''}${altA >= 0 ? arrow + String(Math.round(altA/100)).padStart(3,'0') : ''}`, bx, ly + 20*dpr);
     }
   }
   // the selected aircraft's card
   const sa = sel && acs.find(a => a[0] === sel);
-  $('selcard').style.display = sel ? 'block' : 'none';
+  $('selcard').style.display = sel ? 'flex' : 'none';
   if (sel) {
     if (sa) {
       const [, , , alt, gs, leg, intent, wake, freq, hdg, hdgA, altA, rwy, type, nfix] = sa;
       const fq = { g:'ground', t:'tower', a:'approach', d:'departure', c:'center' }[freq] || '-';
-      $('selcard').innerHTML = `<b>${esc(sel)}</b> · ${esc(type)} (${{J:'super',H:'heavy',L:'large',S:'small'}[wake] || wake}) · ${intent === 'd' ? 'departure' : 'arrival'} runway ${esc(rwy)} · on <b>${fq}</b><br>` +
+      $('selinfo').innerHTML = `<b>${esc(sel)}</b> · ${esc(type)} (${{J:'super',H:'heavy',L:'large',S:'small'}[wake] || wake}) · ${intent === 'd' ? 'departure' : 'arrival'} runway ${esc(rwy)} · on <b>${fq}</b><br>` +
         `${esc(leg)}${nfix ? ' → ' + esc(nfix) : ''} · ${Math.round(alt)} ft · ${Math.round(gs)} kt · hdg ${String(Math.round((hdg - W.magvar + 360) % 360)).padStart(3,'0')}M` +
         (hdgA >= 0 || altA >= 0 ? ` · assigned ${hdgA >= 0 ? 'H' + String(hdgA).padStart(3,'0') : ''} ${altA >= 0 ? altA + ' ft' : ''}` : '') +
-        ` <span class="muted">· esc / click empty space to clear</span>`;
-    } else $('selcard').innerHTML = `<b>${esc(sel)}</b> <span class="muted">not on the scope at this time · esc to clear</span>`;
+        `<br><span class="muted">Transcript: this aircraft only</span>`;
+    } else $('selinfo').innerHTML = `<b>${esc(sel)}</b> <span class="muted">not on the scope at this time</span><br><span class="muted">Transcript: this aircraft only</span>`;
   }
   $('clock').textContent = fmt(t); $('scrub').value = idx;
   const show = {}; document.querySelectorAll('#filters input[data-f]').forEach(i => show[i.dataset.f] = i.checked);
   let lastVis = null;
-  const onlySel = $('fSel').checked && sel;
+  // a selected aircraft filters the transcript to its own exchanges (and the monitor's notes about it)
   for (const l of tr) {
-    const vis = show[l.pos] !== false && (!onlySel || l.cs === sel); l.el.style.display = vis ? '' : 'none';
+    const vis = show[l.pos] !== false && (!sel || l.cs === sel); l.el.style.display = vis ? '' : 'none';
     l.el.classList.toggle('future', l.t > t);
-    l.el.classList.toggle('sel', !!sel && l.cs === sel);
-    l.el.classList.toggle('talk', l.t <= t && l.t > t - TALK_S && !!l.cs && l.pos !== 'mon');
     if (vis && l.t <= t) lastVis = l.el;
   }
-  if ($('fFollow').checked && lastVis && playing) lastVis.scrollIntoView({ block:'nearest' });
+  // follow whenever the replay time moves (playing or scrubbing), so a hand-scrolled transcript stays put otherwise
+  // (and whenever the selection changes, since the filtered transcript is a different list)
+  if (lastVis && (sel !== followSel || ($('fFollow').checked && t !== followT))) showRow(lastVis);
+  followT = t; followSel = sel;
+}
+// bring a transcript row into view by scrolling the transcript box only (scrollIntoView would also scroll the page).
+// On a phone the page scrolls too and the box can run off the bottom of the screen, so aim for the part of the
+// box that is actually on screen, not the whole box.
+function showRow(el) {
+  const log = $('log'), r = log.getBoundingClientRect(), screenH = window.visualViewport ? visualViewport.height : innerHeight;
+  // keep clear of the screen's bottom edge, where Safari's toolbar floats over the page
+  let viewTop = Math.max(0, -r.top), viewBot = Math.min(log.clientHeight, screenH - 56 - r.top);
+  if (viewBot - viewTop < 3 * el.offsetHeight) { viewTop = 0; viewBot = log.clientHeight; }     // box (nearly) off screen
+  const y = el.offsetTop - log.offsetTop, h = el.offsetHeight;
+  if (y < log.scrollTop + viewTop) log.scrollTop = y - viewTop;
+  else if (y + h > log.scrollTop + viewBot) log.scrollTop = y + h - viewBot;
 }
 function l2col(l) { return l.who === l.cs ? '#e6edf3' : (POSCOL[l.who] || '#e6edf3'); }
 function interp(a, b, f) {
@@ -301,7 +411,20 @@ function tick(ts) {
 }
 $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; };
 $('scrub').oninput = () => { idx = Number($('scrub').value); acc = frac = 0; draw(); };
-document.querySelectorAll('#filters input, #layers input').forEach(el => el.onchange = draw);
+// layer choices persist across replays
+const LKEY = 'atc-replay-layers-2';         // -2: gates now start off
+try { const saved = JSON.parse(localStorage.getItem(LKEY) || '{}');
+  document.querySelectorAll('#layers input').forEach(i => { if (i.dataset.l in saved) i.checked = saved[i.dataset.l]; }); } catch (e) {}
+const saveLayers = () => { try { localStorage.setItem(LKEY, JSON.stringify(layer())); } catch (e) {} };
+document.querySelectorAll('#filters input').forEach(el => el.onchange = draw);
+document.querySelectorAll('#layers input').forEach(el => el.onchange = () => { saveLayers(); draw(); });
+const setAll = on => { document.querySelectorAll('#layers input').forEach(i => i.checked = on); saveLayers(); draw(); };
+$('layersNone').onclick = () => setAll(false);        // runways and aircraft callsigns always stay
+$('layersAll').onclick = () => setAll(true);
+const openLayers = open => { $('layers').classList.toggle('open', open); $('layerBtn').setAttribute('aria-expanded', open); };
+$('layerBtn').onclick = e => { e.stopPropagation(); openLayers(!$('layers').classList.contains('open')); };
+$('layers').addEventListener('pointerdown', e => e.stopPropagation());
+document.addEventListener('pointerdown', e => { if (!$('layers').contains(e.target) && e.target !== $('layerBtn')) openLayers(false); });
 c.addEventListener('wheel', e => {
   e.preventDefault();
   // zoom in proportion to how far the wheel / trackpad moved (trackpads send many small
@@ -341,7 +464,6 @@ function pick(clientX, clientY, touch) {
   let best = null, bd = (touch ? 28 : 16) * devicePixelRatio;
   for (const [cs, px, py] of drawn) { const d = Math.hypot(px - mx, py - my); if (d < bd) { bd = d; best = cs; } }
   sel = best; draw();
-  if (sel) { const rows = tr.filter(l => l.cs === sel && !l.el.classList.contains('future')); if (rows.length) rows[rows.length - 1].el.scrollIntoView({ block:'nearest' }); }
 }
 function lift(e) {
   if (!pts.has(e.pointerId)) return;
@@ -351,7 +473,8 @@ function lift(e) {
 }
 c.addEventListener('pointerup', lift);
 c.addEventListener('pointercancel', lift);
-window.addEventListener('keydown', e => { if (e.key === 'Escape') { sel = null; draw(); } });
+$('selclear').onclick = () => { sel = null; draw(); };
+window.addEventListener('keydown', e => { if (e.key === 'Escape') { if ($('layers').classList.contains('open')) openLayers(false); else { sel = null; draw(); } } });
 window.addEventListener('resize', resize);
 resize(); requestAnimationFrame(tick);
 </script>
