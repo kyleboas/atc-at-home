@@ -148,7 +148,14 @@ class Aircraft:
         self.t_freq = 0
         self.m = dict(t_spawn=None, t_push_req=None, t_push_ok=None, t_hold_short=None, t_roll=None,
                       t_airborne=None, t_landed=None, nominal=None, go_arounds=0, done=False, rto=False,
-                      level_s=0, hold_s=0, cross_wait_s=0)
+                      level_s=0, hold_s=0, cross_wait_s=0, fuel_state=None)
+        # Fuel (arrivals): minutes of delay the aircraft can absorb before it would land on its final
+        # reserve (14 CFR 121.639 / ICAO Annex 6). What is left of contingency plus any extra fuel at the
+        # edge of the approach airspace: about 10-25 min for narrowbodies and regionals (short trips),
+        # 25-45 min for widebodies (long trips, larger 5% contingency). Its own RNG so the rest of the
+        # scenario stays the same.
+        frng = random.Random(f"{seed}:{self.cs}:fuel")
+        self.fuel_extra_s = 60 * (frng.uniform(25, 45) if self.wake in ("H", "J") else frng.uniform(10, 25))
 
     @property
     def airborne(self):

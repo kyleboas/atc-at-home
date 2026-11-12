@@ -101,7 +101,8 @@ ANSWERS = {
                  "hold_present_position", "hold_at_fix"},
     "holding_short": {"cross_runway", "hold_short", "hold_position"},
 }
-INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed"}
+INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed", "minimum_fuel",
+                 "fuel_emergency"}
 
 
 class _C:
@@ -351,6 +352,10 @@ def render_pilot(kind, ac, data, atis):
         return f"{cs}, going around."
     if kind == "rejecting_takeoff":
         return f"{cs}, rejecting takeoff."
+    if kind == "minimum_fuel":
+        return f"{cs}, minimum fuel."
+    if kind == "fuel_emergency":
+        return f"Mayday, mayday, mayday, fuel, {cs}, {data.get('min', 0)} minutes of fuel remaining, request priority landing runway {ac.runway}."
     if kind == "unable":
         return f"{cs}, unable, {data.get('why', '')}."
     return f"{cs}, {kind}."

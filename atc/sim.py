@@ -624,6 +624,10 @@ class Sim:
             for ac in list(self.aircraft.values()):
                 if not ac.m["done"]:
                     self.step_ac(ac)
+            if self.t % 10 == 0:
+                for ac in self.aircraft.values():
+                    if ac.intent == "arrival" and ac.airborne and not ac.m["done"]:
+                        self.fuel_check(ac)
             self.monitor.on_tick()
             try:
                 cmds = self.controller.step(self.observe()) or []
@@ -693,7 +697,7 @@ class Sim:
                 "give_way": a.give_way["cs"] if a.give_way else None, "giving_way_now": a.gw_stop,
                 "exit_called": a.exit_cmd is not None,
                 "t_landed": a.m["t_landed"], "t_airborne": a.m["t_airborne"], "t_roll": a.m["t_roll"],
-                "filed_alt": a.filed_alt,
+                "filed_alt": a.filed_alt, "fuel": a.m["fuel_state"],
             })
         reqs = [dict(r) for r in self.requests if r["answered"] is None]
         return {"t": self.t, "atis": self.atis, "aircraft": acs, "requests": reqs}
@@ -771,6 +775,24 @@ class Sim:
         ac.m["nominal"] = self.eta(ac, rem) + 30
         ac.m["rem0"] = rem
         ac.msg_due = (self.t + ac.rng.randint(3, 10), "check_in", {"alt": int(round(ac.alt, -2))})
+
+    def fuel_check(self, ac):
+        """An arrival carries enough fuel for its planned time to land (nominal) plus fuel_extra_s.
+        Spare = fuel left minus the time still needed to land; the final reserve is not counted.
+        Minimum fuel (FAA InFO 08004, ICAO Annex 6) when under 5 min spare: an advisory, no priority.
+        Mayday fuel when spare runs out: it now expects to land on its final reserve."""
+        if ac.m["nominal"] is None:
+            return
+        left = ac.m["nominal"] + ac.fuel_extra_s - (self.t - ac.m["t_spawn"])
+        spare = left - (self.eta(ac, F.remaining(ac)) or 0)
+        if spare < 0 and ac.m["fuel_state"] != "emergency":
+            ac.m["fuel_state"] = "emergency"
+            ac.say(self, "fuel_emergency", {"min": max(0, int(left / 60))})
+            self.monitor.add("hard", "fuel", ac, "Mayday fuel: delayed until it would land below final reserve")
+        elif spare < 300 and ac.m["fuel_state"] is None:
+            ac.m["fuel_state"] = "minimum"
+            ac.say(self, "minimum_fuel")
+            self.monitor.add("rule", "fuel", ac, "minimum fuel: delayed to under 5 min of spare fuel")
 
     def spawn_departure(self, ac, s):
         st = W.STANDS[ac.stand]
