@@ -1112,6 +1112,7 @@ class Approach:
             if a["freq"] == "approach" and a["airborne"] and v and v["phase"] in ("missed", "missed_north"):
                 self.fly_vectors(a, 0.0, acs, out)
         self.probe(acs, out)
+        self.co_level(acs, out)
         self.handoffs(acs, out)
 
     def probe(self, acs, out):
@@ -1164,6 +1165,31 @@ class Approach:
                     lvl = max(lvl, menu_alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])))
                     if lvl > o["alt"] - 900:
                         continue
+                c.send(out, C.vector(cs, altitude=lvl))
+                self.level[cs] = (lvl, o["cs"])
+                break
+
+    def co_level(self, acs, out):
+        """6.2.2: two level aircraft at the same level closing (the probe only stops climbs and
+        descents toward another's level): the follower moves 1,000 ft, down if the MVA allows."""
+        c = self.c
+        for a in acs.values():
+            cs = a["cs"]
+            if a["freq"] != "approach" or not a["airborne"] or a["established"] or cs in self.cleared \
+                    or a["holding"] or a["hold_fix"] or abs(a["vs"]) > 300 or not c.quiet(cs, 8):
+                continue
+            if cs in self.hold and not self.hold[cs].get("out"):
+                continue
+            for o in acs.values():
+                if o is a or not o["airborne"] or o["intent"] != "arrival" or abs(o["vs"]) > 300:
+                    continue
+                if abs(a["alt"] - o["alt"]) >= 900 or (a["rem_nm"] or 0) <= (o["rem_nm"] or 0):
+                    continue
+                if closest_approach(a, o, 120) > 3.3:
+                    continue
+                lvl = menu_alt_below(o["alt"] - 1000)
+                if lvl < menu_alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])):
+                    lvl = menu_alt_above(o["alt"] + 1000)
                 c.send(out, C.vector(cs, altitude=lvl))
                 self.level[cs] = (lvl, o["cs"])
                 break
@@ -1357,7 +1383,7 @@ class Approach:
                 and cs != a["cs"] and (not h.get("out") or acs[cs]["holding"] or acs[cs]["alt"] > h["alt"] - 900)}
         # on top of the stack, so the stack leaves in sequence order from the bottom
         alt = max(used) + 1000 if used else base
-        return alt if alt <= 17000 else None
+        return alt if alt <= 23000 else None
 
     def manage_hold(self, a, delay, acs, out):
         """Exit the hold when the slot comes (the pilot leaves at the next fix passage), lowest
