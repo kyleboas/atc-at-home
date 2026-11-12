@@ -50,6 +50,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main          # the latest main, not the commit that was scored (main may have moved on)
       - uses: actions/download-artifact@v4
         with:
           name: leaderboard
@@ -61,5 +63,7 @@ jobs:
           git config user.name "atc-leaderboard[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f leaderboard/best.json leaderboard/results.jsonl
-          git diff --cached --quiet || git commit -m "leaderboard: ${GITHUB_SHA::7} [skip ci]"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "leaderboard: ${GITHUB_SHA::7} [skip ci]"
+          for i in 1 2 3; do git push && exit 0; git pull --rebase -q origin main; done
+          exit 1
