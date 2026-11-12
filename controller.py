@@ -1,3 +1,4 @@
+# (CI smoke test: comment-only change, should not beat the best)
 """Baseline AI controller for KSFO (West Plan): Ground, Tower, Approach, Departure.
 
 THIS IS THE FILE AUTORESEARCH EDITS. Everything under atc/ and evaluate.py is frozen. Each
