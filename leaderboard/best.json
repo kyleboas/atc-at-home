@@ -1,10 +1,10 @@
 {
- "cost": 531.408,
+ "cost": 530.365,
  "hard": 1,
  "rule": 88,
  "service": 16,
  "go_arounds": 14,
- "delay_min_per_scenario": 443.57,
+ "delay_min_per_scenario": 442.53,
  "movements": 424,
  "controller_errors": 0,
  "violations_by_position": {
@@ -32,10 +32,10 @@
   "wake": 7
  },
  "manual": 44,
- "rules": "08e8b81d8e40",
- "commit": "37e08ea",
+ "rules": "1c5e93c37814",
+ "commit": "269d501",
  "author": "kyleboas",
- "note": "Only Infinite Flight commands (IF menus + in-app features the IFATC manual documents)",
- "t": 1794451595.2714934,
+ "note": "",
+ "t": 1794455290.161862,
  "status": "baseline"
 }
