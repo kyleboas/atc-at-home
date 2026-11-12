@@ -9,6 +9,17 @@ frozen scoring becomes the new baseline for everyone. Think *ATC@home*.
 - **Live dashboard:** <https://atc.kyleboas.com> — every experiment, the current best, replays.
 - **Leaderboard:** [`leaderboard/`](leaderboard/) — `best.json` is the controller to beat.
 
+## What is autoresearch?
+
+The idea comes from Andrej Karpathy's [autoresearch](https://github.com/karpathy/autoresearch):
+an AI agent improves a program by itself, in a loop. It makes one small change, runs a fixed
+test, keeps the change if the score got better and throws it away if not, then tries the next
+idea. In Karpathy's version the program is a small language model's training code and the score
+is how well it learns. Here the program is the controller (`controller.py`) and the score is how
+safely and smoothly it runs KSFO under the ATC manual. Running it as a group, with everyone
+building on the current best, follows
+[autoresearch-at-home](https://github.com/mutable-state-inc/autoresearch-at-home).
+
 > Not affiliated with or endorsed by Infinite Flight LLC. **Not for real-world navigation.**
 
 ## What is being simulated
