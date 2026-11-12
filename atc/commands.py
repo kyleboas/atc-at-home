@@ -1,6 +1,6 @@
 """Controller command menus and radio phraseology for KSFO (Ground, Tower, Approach, Departure).
 
-Built from Infinite Flight's ATC menus (IF 21.1 menus, charted at https://www.helpathand.nl/janpolet/infinite-flight-atc-commands/), the IFATC manual
+Built from Infinite Flight's ATC menus (reference/if-atc-menus.md, IF 21.1), the IFATC manual
 items the menus do not list (radar contact, approach clearances with an intercept heading and
 "maintain until established", fly runway heading on a go-around), and what a multi-runway airport
 needs: a runway designator in every runway clearance, cross runway / hold short runway X at Y,
@@ -43,7 +43,11 @@ SPEC = {
                        "Taxi to > Runway [XX] (drag & taxi route via taxiways, manual 2.2.2)"),
     "taxi_to_parking": ((G,), [], {"via": None}, "Taxi to > Parking (drag & taxi route, manual 2.2.4)"),
     "continue_taxi": ((G,), [], {}, "Continue taxi"),
-    "give_way": ((G,), ["to"], {}, "Give way to > exiting / left / right / ahead"),
+    "give_way": ((G,), ["to"], {"traffic": None},
+                 "Give way to > Aircraft exiting runway | on your left | on your right | ahead (2.2.1); the pilot "
+                 "stops short of the traffic's path and continues on their own once it has passed"),
+    "hold_short_taxiway": ((G,), ["taxiway"], {},
+                           "Hold short > Taxiway [X] (on the taxi route; released with 'continue taxi')"),
     # ---- tower: departures ----
     "line_up_and_wait": ((T,), ["runway"], {}, "Line up and wait > Runway [XX]"),
     "cleared_takeoff": ((T,), ["runway"], {"immediate": False}, "Cleared for takeoff > Runway [XX] > Send | Request immediate takeoff"),
@@ -94,7 +98,7 @@ ANSWERS = {
                  "hold_present_position", "hold_at_fix"},
     "holding_short": {"cross_runway", "hold_short", "hold_position"},
 }
-INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed"}
+INFORMATIONAL = {"going_around", "rejecting_takeoff", "unable", "clear_of_runway", "crossed", "holding_short_taxiway"}
 
 
 class _C:
@@ -142,6 +146,8 @@ def normalize(cmd):
         ("turn", lambda v: v in (None, "left", "right"), "turn must be None|left|right"),
         ("number", lambda v: v is None or (isinstance(v, int) and 1 <= v <= 8), "number must be 1-8"),
         ("to", lambda v: v in ("exiting", "left", "right", "ahead"), "give way to exiting|left|right|ahead"),
+        ("traffic", lambda v: v is None or isinstance(v, str), "traffic must be a callsign"),
+        ("taxiway", lambda v: v in W.TAXIWAYS, "taxiway must be a KSFO taxiway name"),
         ("side", lambda v: v in ("left", "right", "any"), "side must be left|right|any"),
         ("expedite", lambda v: v in (None, False, True, "final"), "expedite must be None|True|'final'"),
         ("mode", lambda v: v in (None, "or_greater", "or_below"), "mode must be None|or_greater|or_below"),
@@ -219,8 +225,11 @@ def render(cmd, ac=None, leader=None):
     if n == "continue_taxi":
         return f"{cs}, continue taxi."
     if n == "give_way":
-        return f"{cs}, give way to " + {"exiting": "aircraft exiting the runway", "left": "aircraft on your left",
-                                         "right": "aircraft on your right", "ahead": "aircraft ahead"}[cmd["to"]] + "."
+        who = cmd.get("traffic") or "aircraft"
+        return f"{cs}, give way to {who} " + {"exiting": "exiting the runway", "left": "on your left",
+                                              "right": "on your right", "ahead": "ahead"}[cmd["to"]] + "."
+    if n == "hold_short_taxiway":
+        return f"{cs}, hold short of taxiway {cmd['taxiway']}."
     if n == "line_up_and_wait":
         return f"{cs}, runway {rw}, line up and wait."
     if n == "cleared_takeoff":
@@ -325,6 +334,8 @@ def render_pilot(kind, ac, data, atis):
         return f"San Francisco Ground, {cs}, clear of runway {data.get('rwy', ac.runway)}{where}{hs}, request taxi to parking."
     if kind == "holding_short":
         return f"{cs}, holding short runway {data.get('rwy')}."
+    if kind == "holding_short_taxiway":
+        return f"{cs}, holding short of taxiway {data.get('twy')}."
     if kind == "clear_of_runway":
         return f"{cs}, clear of runway {data.get('rwy')}."
     if kind == "crossed":

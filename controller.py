@@ -2,7 +2,7 @@
 
 THIS IS THE FILE AUTORESEARCH EDITS. Everything under atc/ and evaluate.py is frozen. Each
 position only talks to aircraft on its own frequency, using the menus in atc/commands.py
-(https://www.helpathand.nl/janpolet/infinite-flight-atc-commands/). The controller reads the airport diagram and the charts
+(reference/if-atc-menus.md). The controller reads the airport diagram and the charts
 (atc.world, atc.procs: runways, taxiways, CIFP procedures, MVA) like a controller reads the
 published plates; it only sees traffic through the observation.
 
@@ -347,6 +347,7 @@ class Ground:
         self.c = ctl
         self.route_cache = {}
         self.wait = {}          # cs -> (cs it waits for, shared nodes)
+        self.stopped = {}       # (cs, cs) -> t: both told to hold position, collision imminent
 
     def route(self, start, goal, acs=None, me=None):
         """Shortest taxi route on the OSM graph (as the sim's pilots taxi it), never along a runway,
@@ -437,6 +438,7 @@ class Ground:
             elif k == "request_taxi" and a["phase"] == "pushed" and c.quiet(a["cs"], 3):
                 nodes, via = self.route(a["gnode"], W.DEP_HOLD[a["runway"]], acs, a)
                 if nodes:
+                    self.give_way_first(a, nodes, acs, out)
                     c.send(out, C.taxi_to_runway(a["cs"], runway=a["runway"], via=via, contact_tower=True))
             elif k == "ground_checkin" and a["phase"] in ("clear", "taxi_in") and c.quiet(a["cs"], 3):
                 if a["hs_rwy"]:
@@ -444,6 +446,7 @@ class Ground:
                 goal = W.STANDS[a["stand"]]["node"] if a.get("stand") in W.STANDS else None
                 nodes, via = self.route(a["gnode"], goal, acs, a) if goal else (None, None)
                 if nodes:
+                    self.give_way_first(a, nodes, acs, out)
                     c.send(out, C.taxi_to_parking(a["cs"], via=via))
         # pushbacks held for traffic: release when clear
         for a in acs.values():
@@ -480,17 +483,19 @@ class Ground:
             if nodes and nodes[0] == a.get("gnode") and len(nodes) > 1:
                 cum[nodes[0]] = -dist((a["x"], a["y"]), W.NODES[nodes[0]])     # just passed it
             prof[a["cs"]] = (nodes, cum)
+        self.imminent(acs, out)
         # release waiters whose conflict has passed
         for cs, (ocs, shared, t0) in list(self.wait.items()):
             a, o = acs.get(cs), acs.get(ocs)
             gone = o is None or not set(o.get("groute") or []) & shared or o["phase"] not in ("taxiing", "taxi_in", "pushing") \
-                or c.t - t0 > 150 or (o["hold"] and o["cs"] in self.wait)
+                or c.t - t0 > 150 or ((o["hold"] or o.get("give_way") or o.get("hold_short_taxiway")) and o["cs"] in self.wait)
             if a is None or a["phase"] not in ("taxiing", "taxi_in"):
                 self.wait.pop(cs)
-            elif gone and c.quiet(cs, 4):
+            elif c.t - t0 > 15 and not (a["hold"] or a.get("hold_short_taxiway") or a.get("give_way")):
+                self.wait.pop(cs)                      # gave way and has continued on their own
+            elif gone and c.quiet(cs, 4) and (a["hold"] or a.get("hold_short_taxiway")):
                 self.wait.pop(cs)
-                if a["hold"]:
-                    c.send(out, C.continue_taxi(cs))
+                c.send(out, C.continue_taxi(cs))
         for i, a in enumerate(movers):
             na, ca = prof[a["cs"]]
             ea = {(u, v) for u, v in zip(na, na[1:])}
@@ -514,10 +519,84 @@ class Ground:
                 if da > 0.5 or db > 0.5:
                     continue
                 waiter, other, dw = (a, b, da) if da > db else (b, a, db)
-                if dw > 0.06 or dw < 0.008 or not c.quiet(waiter["cs"], 3):
-                    continue                           # too far yet, or already on it (cannot stop short)
-                c.send(out, C.hold_position(waiter["cs"]))
+                if _in_path(waiter, other):
+                    waiter, other, dw = other, waiter, min(da, db)   # the one in the way cannot give way
+                if dw < 0.008 or not c.quiet(waiter["cs"], 3):
+                    continue                           # already on it (cannot stop short)
+                nw = prof[waiter["cs"]][0]
+                entry = min((n for n in shared if n in prof[waiter["cs"]][1]), key=lambda k: prof[waiter["cs"]][1][k])
+                twy = _entering_taxiway(waiter, nw, entry)
+                if dw > 0.06:
+                    # early: hold short of the taxiway where the conflict starts, if it is a different one
+                    if twy and dw < 0.25:
+                        c.send(out, C.hold_short_taxiway(waiter["cs"], taxiway=twy))
+                        self.wait[waiter["cs"]] = (other["cs"], shared, c.t)
+                    continue
+                side = _side(waiter, other)
+                if not side and twy is None and _side(other, waiter) and c.quiet(other["cs"], 3):
+                    waiter, other, side = other, waiter, _side(other, waiter)   # traffic behind: it gives way
+                if side:
+                    c.send(out, C.give_way(waiter["cs"], to=side, traffic=other["cs"]))     # 2.2.1
+                elif twy:
+                    c.send(out, C.hold_short_taxiway(waiter["cs"], taxiway=twy))
+                else:
+                    continue
                 self.wait[waiter["cs"]] = (other["cs"], shared, c.t)
+
+    def imminent(self, acs, out):
+        """Hold position is for an imminent collision only (2.2.1): stop both, then one gives way."""
+        c = self.c
+        movers = [a for a in acs.values() if a["freq"] == "ground" and a["phase"] in ("taxiing", "taxi_in")]
+        for pair, t0 in list(self.stopped.items()):
+            a, b = acs.get(pair[0]), acs.get(pair[1])
+            if a is None or b is None or a["phase"] not in ("taxiing", "taxi_in") or b["phase"] not in ("taxiing", "taxi_in"):
+                for x in (a, b):
+                    if x is not None and x["hold"] and c.quiet(x["cs"], 3):
+                        c.send(out, C.continue_taxi(x["cs"]))
+                self.stopped.pop(pair)
+                continue
+            if c.t - t0 < 8 or (a["gs"] > 1 or b["gs"] > 1) and c.t - t0 < 20:
+                continue
+            # the one with the other more nearly ahead gives way; the other goes first
+            ra = abs(W.ang_diff(a["hdg"], W.bearing((a["x"], a["y"]), (b["x"], b["y"]))))
+            rb = abs(W.ang_diff(b["hdg"], W.bearing((b["x"], b["y"]), (a["x"], a["y"]))))
+            loser, winner = (a, b) if ra < rb else (b, a)
+            side = _side(loser, winner) or "ahead"
+            if winner["hold"]:
+                c.send(out, C.continue_taxi(winner["cs"]))
+            c.send(out, C.give_way(loser["cs"], to=side, traffic=winner["cs"]))
+            if loser["hold"]:
+                c.send(out, C.continue_taxi(loser["cs"]))
+            self.wait.pop(loser["cs"], None)
+            self.wait.pop(winner["cs"], None)
+            self.stopped.pop(pair)
+        busy = {cs for p in self.stopped for cs in p}
+        for i, a in enumerate(movers):
+            for b in movers[i + 1:]:
+                if a["cs"] in busy or b["cs"] in busy or (a["gs"] < 3 and b["gs"] < 3):
+                    continue
+                if not _imminent(a, b):
+                    continue
+                for x in (a, b):
+                    if not x["hold"]:
+                        c.send(out, C.hold_position(x["cs"]))
+                self.stopped[(a["cs"], b["cs"])] = c.t
+                busy |= {a["cs"], b["cs"]}
+
+    def give_way_first(self, a, nodes, acs, out):
+        """2.2.1: if the new taxi route meets moving traffic right away, give way first, then taxi."""
+        mine = [(a["x"], a["y"])] + [W.NODES[n] for n in nodes[:4]]
+        for o in acs.values():
+            if o is a or o["airborne"] or o["phase"] not in ("taxiing", "taxi_in", "exiting", "landing_roll") or o["gs"] < 3:
+                continue
+            if dist((a["x"], a["y"]), (o["x"], o["y"])) > 0.3:
+                continue
+            theirs = [(o["x"], o["y"])] + list(o.get("gpts") or [])[:12]
+            if _poly_dist(mine, theirs) < 0.04:
+                side = _side(a, o)
+                if side:
+                    self.c.send(out, C.give_way(a["cs"], to=side, traffic=o["cs"]))
+                    return
 
     @staticmethod
     def push_conflict(a, acs):
@@ -531,6 +610,72 @@ class Ground:
             if o["phase"] in ("taxi_in", "taxiing") and dist(p, (o["x"], o["y"])) < 0.035 and o["gs"] > 2:
                 return True
         return False
+
+
+def _imminent(a, b):
+    """Within ~400 ft and heading for < ~120 ft separation within 25 s (same test as the rules monitor)."""
+    px, py = b["x"] - a["x"], b["y"] - a["y"]
+    d = math.hypot(px, py)
+    if d > 0.065:
+        return False
+    if abs(W.ang_diff(a["hdg"], b["hdg"])) < 60:
+        return False                       # in trail, same direction: the pilots keep their spacing
+    ha, hb = math.radians(a["hdg"]), math.radians(b["hdg"])
+    vx = (math.sin(hb) * b["gs"] - math.sin(ha) * a["gs"]) / 3600
+    vy = (math.cos(hb) * b["gs"] - math.cos(ha) * a["gs"]) / 3600
+    vv = vx * vx + vy * vy
+    if vv < 1e-12:
+        return False
+    t_cpa = -(px * vx + py * vy) / vv                     # s to closest approach (straight lines)
+    d_cpa = math.hypot(px + vx * t_cpa, py + vy * t_cpa)
+    return 0 < t_cpa < 25 and d_cpa < 0.02                # < ~120 ft apart within 25 s
+
+
+def _in_path(a, o):
+    """a stands on o's route ahead (o would have to pass through a)."""
+    pts = [(o["x"], o["y"])] + list(o.get("gpts") or [])[:15]
+    return _poly_dist([(a["x"], a["y"])], pts) < 0.02
+
+
+def _side(a, o):
+    """Give way menu side for traffic o as seen from a: exiting / ahead / left / right (None if behind)."""
+    if o["phase"] in ("exiting", "landing_roll") or (o["phase"] == "clear" and o["intent"] == "arrival" and o.get("zone")):
+        return "exiting"
+    rb = W.ang_diff(a["hdg"], W.bearing((a["x"], a["y"]), (o["x"], o["y"])))
+    if abs(rb) <= 45:
+        return "ahead"
+    if -160 <= rb <= -20:
+        return "left"
+    if 20 <= rb <= 160:
+        return "right"
+    return None
+
+
+def _entering_taxiway(a, nodes, entry):
+    """Name of the taxiway the route turns onto at or just before node `entry`, if not the current one."""
+    if entry not in nodes:
+        return None
+    i = nodes.index(entry)
+    names = []
+    for u, v in zip(nodes, nodes[1:]):
+        ks = [k for m, k in W.ADJ[u] if m == v]
+        names.append(W.EDGES[min(ks, key=lambda kk: W.EDGES[kk][4])][2] if ks else None)
+    cur = names[0] if names else None
+    if i >= len(names) or i == 0:
+        return None
+    nxt = names[i]
+    return nxt if nxt and nxt != cur and nxt in W.TAXIWAYS and names[i - 1] != nxt else None
+
+
+def _poly_dist(p, q):
+    def ps(pt, a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = dx * dx + dy * dy
+        t = 0.0 if L < 1e-12 else max(0.0, min(1.0, ((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / L))
+        return math.hypot(pt[0] - a[0] - t * dx, pt[1] - a[1] - t * dy)
+    sp = list(zip(p, p[1:])) or [(p[0], p[0])]
+    sq = list(zip(q, q[1:])) or [(q[0], q[0])]
+    return min(min(ps(a, c, d), ps(b, c, d), ps(c, a, b), ps(d, a, b)) for a, b in sp for c, d in sq)
 
 
 def _dist_along(a, pts, s):
@@ -1100,16 +1245,35 @@ class Approach:
             c.send(out, C.make_360(cs, direction="right"))           # ~150 s of delay (6.7.2)
             self.t360[cs] = c.t
             return
-        if hf and delay > absorb + 15 and hf[0] in route[:2] and cs not in self.cleared:
+        # an active stack on the route is joined on top, never descended through (6.7.2, 6.2.2)
+        through = bool(hf and hf[0] in route[:2] and cs not in self.cleared and self.stack_active(hf[0], a, acs))
+        if hf and (delay > absorb + 15 or through) and hf[0] in route[:2] and cs not in self.cleared:
             alt = self.stack_alt(hf, a, acs)
             if alt is not None:
+                # levels in sequence order: a later arrival still descending to the fix from above
+                # that was given a lower level takes this (higher) one, we take its level
+                swap = None
+                for o, h in self.hold.items():
+                    ob = acs.get(o)
+                    if o == cs or ob is None or h["fix"] != hf[0] or h.get("out") or ob["holding"] \
+                            or not ob["hold_fix"] or h["alt"] >= alt:
+                        continue
+                    if self.key.get(o, 0) > self.key.get(cs, 0) and ob["alt"] > a["alt"] + 1000 \
+                            and ob["alt"] >= alt - 300 and (swap is None or h["alt"] < self.hold[swap]["alt"]):
+                        swap = o
+                if swap is not None and c.quiet(swap, 4):
+                    low = self.hold[swap]["alt"]
+                    self.hold[swap]["alt"] = alt
+                    c.send(out, C.vector(swap, altitude=alt))
+                    alt = low
                 c.send(out, C.hold_at_fix(cs, fix=hf[0], altitude=alt, turns=HOLD_TURNS.get(hf[0], "right")))
                 self.hold[cs] = {"fix": hf[0], "alt": alt}
                 self.speed.pop(cs, None)
                 return
+            through = False
         # 2) the approach clearance when approaching the STAR's last fix (the IAF)
         end = self.star_end(a)
-        if end and cs not in self.cleared and a["leg"] == "star" and end in route:
+        if end and cs not in self.cleared and a["leg"] == "star" and end in route and not through:
             p = W.K.FIXES.get(end)
             if p and dist((a["x"], a["y"]), p) < 14 and route.index(end) <= 1:
                 self.clear(a, out)
@@ -1122,6 +1286,22 @@ class Approach:
             return
         # 4) speed (6.15): the fastest speed that still meets the slot
         self.speed_control(a, acs, out)
+
+    def stack_active(self, fix, a, acs):
+        """Another aircraft is in the holding pattern at `fix`, or assigned to it and nearer the fix."""
+        p = W.K.FIXES.get(fix)
+        if p is None:
+            return False
+        mine = dist((a["x"], a["y"]), p)
+        for o, h in self.hold.items():
+            if o == a["cs"] or o not in acs or h["fix"] != fix:
+                continue
+            ob = acs[o]
+            if ob["holding"]:
+                return True
+            if ob["hold_fix"] and not h.get("out") and dist((ob["x"], ob["y"]), p) < mine:
+                return True
+        return False
 
     def followed(self, a, acs, d=7.0):
         """Traffic that a 360 here would get in the way of: anyone within 6 nm / 1,500 ft, anyone
@@ -1284,23 +1464,33 @@ class Approach:
             return
         if ph == "base":
             off, along = offset_right(a["x"], a["y"])
-            if a["leg"] != "360" and off > INTERCEPT_OFFSET + 3.0 and (self.pattern_short(a, "base") > 60
-                                                                     or self.join_conflict(a, "base", acs)):
+            short = self.pattern_short(a, "base") if a["leg"] != "360" else 0.0
+            if a["leg"] != "360" and off > INTERCEPT_OFFSET + 3.0 and (short > 60 or self.join_conflict(a, "base", acs)):
                 # still well ahead of the slot on base: a left 360 (away from the field and the
-                # final, 6.7.2) or 180 kts if traffic is near, instead of joining early (6.11.8)
-                if self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs) and mva_clear_360(a):
+                # final, 6.7.2) only for more than ~120 s (it takes ~150 s), else slow down
+                # (180 kts, then 160 kts approach speed, 6.15), instead of joining early (6.11.8)
+                if (short > 120 or self.join_conflict(a, "base", acs)) and self.t360.get(cs, -999) < c.t - 200 \
+                        and not self.followed(a, acs) and mva_clear_360(a):
                     c.send(out, C.make_360(cs, direction="left"))
                     self.t360[cs] = c.t
                     return
-                if self.speed.get(cs, (None,))[0] != 180:
+                if self.speed.get(cs, (None,))[0] not in (180, 160):
                     c.send(out, C.maintain_speed(cs, kts=180, mode=None))
                     self.speed[cs] = (180, "kts")
+                    return
+                if self.speed.get(cs, (None,))[0] == 180 and short > 60 and c.perf(a)["vapp"] + 5 <= 160:
+                    c.send(out, C.approach_speed(cs, kts=160))
+                    self.speed[cs] = (160, "app")
                     return
             R = (a["gs"] / 3600) / math.radians(2.2)
             lead = R * (1 - math.cos(math.radians(abs(W.ang_diff(BASE_T, INTERCEPT_T)))))
             if off <= INTERCEPT_OFFSET + lead and abs(W.ang_diff(a["hdg"], BASE_T)) < 8:
                 alt = self.intercept_alt(a, "intercept")
                 c.send(out, C.cleared_approach(cs, approach="ils", runway="28R", heading=INTERCEPT_MAG, altitude=alt))
+                if a["alt"] > alt + 200 and cs not in self.level:
+                    # maintain-until-established holds a higher aircraft level: descend it to the
+                    # intercept altitude so it joins from below the glidepath (6.11.4)
+                    out.append(C.vector(cs, heading=INTERCEPT_MAG, altitude=alt))
                 out.append(C.approach_speed(cs, kts=180))
                 self.speed[cs] = (180, "app")
                 v["phase"] = "intercept"

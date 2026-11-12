@@ -1,5 +1,5 @@
 """Rules monitor for KSFO: checks Ground, Tower, Approach and Departure against the IFATC
-manual (https://infiniteflight.com/guide/atc-manual), with the multi-runway rules a West Plan needs.
+manual (reference/atc-manual-1-to-6.txt), with the multi-runway rules a West Plan needs.
 
 Severity:
   hard     loss of runway separation (3.1.1, incl. intersecting runways 01L/01R x 28L/28R),
@@ -16,6 +16,8 @@ Severity:
                      is not the next one on the route (2.2.2 "must have crossed a previous
                      runway before another runway crossing clearance may be issued")
              2.3.1   crossing clearance not naming the runway in the direction in use
+             2.2.1   taxi conflicts are resolved with "give way" (or hold short of a taxiway);
+                     "hold position" for traffic only when a collision is imminent (< ~25 s)
   service  not a rule break, but worse service.
 
 Each violation names the position that owns it (GND, TWR, APP, DEP). The monitor sees the
@@ -65,6 +67,25 @@ class Monitor:
     def others(self, ac):
         return [o for o in self.sim.aircraft.values() if o is not ac and not o.m["done"]]
 
+    @staticmethod
+    def imminent(a, b):
+        """Two aircraft on the ground about to collide: within ~400 ft and heading for < ~120 ft separation within 25 s."""
+        px, py = b.x - a.x, b.y - a.y
+        d = math.hypot(px, py)
+        if d > 0.065:
+            return False
+        if abs(W.ang_diff(a.hdg, b.hdg)) < 60:
+            return False                       # in trail, same direction: the pilots keep their spacing
+        ha, hb = math.radians(a.hdg), math.radians(b.hdg)
+        vx = (math.sin(hb) * b.gspeed - math.sin(ha) * a.gspeed) / 3600
+        vy = (math.cos(hb) * b.gspeed - math.cos(ha) * a.gspeed) / 3600
+        vv = vx * vx + vy * vy
+        if vv < 1e-12:
+            return False
+        t_cpa = -(px * vx + py * vy) / vv                     # s to closest approach (straight lines)
+        d_cpa = math.hypot(px + vx * t_cpa, py + vy * t_cpa)
+        return 0 < t_cpa < 25 and d_cpa < 0.02                # < ~120 ft apart within 25 s
+
     # ------------------------------------------------------------------ commands
     def on_command(self, ac, cmd, err):
         sim = self.sim
@@ -80,6 +101,12 @@ class Monitor:
                 if o.phase == "pushing" and not o.hold and math.hypot(o.x - ac.x, o.y - ac.y) < 0.045:
                     self.add("rule", "2.1.3", ac, f"pushback approved while {o.cs} is pushing {math.hypot(o.x - ac.x, o.y - ac.y) * W.FT_NM:.0f} ft away")
                     break
+        if n == "hold_position" and ac.freq == "ground" and ac.phase in ("taxiing", "taxi_in") and ac.gspeed > 2:
+            near = [o for o in others if (o.phase in GROUND or o.phase in ("exiting", "landing_roll")) and not o.airborne
+                    and math.hypot(o.x - ac.x, o.y - ac.y) < 0.3]
+            if near and not any(self.imminent(ac, o) for o in near):
+                self.add("rule", "2.2.1", ac, f"stopped with 'hold position' for {near[0].cs}: use 'give way' "
+                         "(or hold short of a taxiway); hold position only when a collision is imminent", pos="GND")
         if n in ("taxi_to_runway", "taxi_to_parking") and not cmd.get("via"):
             self.add("rule", "2.2.2", ac, "taxi clearance without a route (drag & taxi is available at KSFO)")
         if n == "taxi_to_runway" and ac.cat == "prop" and not cmd["contact_tower"]:
