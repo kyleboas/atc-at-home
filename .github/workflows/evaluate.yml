@@ -26,6 +26,8 @@ jobs:
           if [ -n "$bad" ]; then
             echo "::error::A submission may only change controller.py. Also changed:"; echo "$bad"; exit 1
           fi
+      - name: Controller uses only what a controller may (tools/ci_guard.py)
+        run: python tools/ci_guard.py controller.py
       - name: Score on the training scenarios
         run: python tools/ci_score.py --out result.json --summary "$GITHUB_STEP_SUMMARY"
       - name: Record the pull request number for the comment job

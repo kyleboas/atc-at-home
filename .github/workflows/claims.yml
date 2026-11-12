@@ -1,0 +1,25 @@
+# Closes experiment claims (issues titled "[claim] ...") that were not finished within 45
+# minutes, so the idea is free for someone else. Runs no repository code.
+name: claims
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  issues: write
+jobs:
+  expire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
+            const cutoff = Date.now() - 45 * 60 * 1000;
+            for (const i of issues) {
+              if (i.pull_request || !i.title.startsWith('[claim] ') || new Date(i.created_at).getTime() > cutoff) continue;
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: i.number,
+                body: 'No result after 45 minutes, so this claim expired and the idea is free again.' });
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: i.number,
+                title: '[expired] ' + i.title.slice(8), state: 'closed', state_reason: 'not_planned' });
+            }

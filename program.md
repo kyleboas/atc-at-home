@@ -9,12 +9,18 @@ minimum vectoring altitudes. It must follow the Infinite Flight ATC manual
 Infinite Flight command menus as implemented in `atc/commands.py` (charts: https://www.helpathand.nl/janpolet/infinite-flight-atc-commands/). More Infinite
 Flight documentation is linked in README.md.
 
+Working with others? Also follow [`collab.md`](collab.md): it claims each idea and publishes each
+result as an issue so contributors don't repeat each other.
+
 ## Rules
 
 - Edit **only** `controller.py`. Never edit `atc/`, `ksfo/`, `evaluate.py`, `FROZEN.sha256`,
   `tools/`, `results.*` or `status.json`. The evaluator refuses to run if frozen files change.
 - Never run `--split holdout`. Humans score that.
 - Deterministic controller: no randomness, no wall clock.
+- Imports: only `math`, `heapq`, `bisect`, `collections`, `itertools`, `functools`, `dataclasses`,
+  `enum`, `typing`, `statistics`, `operator` and the `atc` package; no `getattr`/`eval`/file access,
+  no dunder attributes, and never assign into `W.*`, `P.*` or `C.*` (checked by `tools/ci_guard.py`).
 - Prefer general, manual-grounded logic over special cases for particular seeds.
 
 ## Manual rules that are enforced (and must not get worse)

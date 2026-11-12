@@ -44,7 +44,7 @@ jobs:
                 row('cost', r.cost, b.cost), row('hard violations', r.hard, b.hard),
                 row('manual 6.11/6.14/2.2', r.manual, b.manual), row('rule violations', r.rule, b.rule),
                 row('go-arounds', r.go_arounds, b.go_arounds), '',
-                r.beats_best ? '✅ **Beats the current best.** A maintainer will check it on the private held-out scenarios before merging.'
+                r.beats_best ? '✅ **Beats the current best.** The held-out check runs next and posts its result here.'
                              : '❌ **Does not beat the current best:** ' +
                                (Array.isArray(r.fail_reasons) ? r.fail_reasons.filter(x => REASONS[x]).map(x => REASONS[x]).join('; ') : '')
               ].join('\n');

@@ -17,6 +17,13 @@ on the same frozen simulator and scoring as everyone else's.
    reading files outside the repo, no tricks that detect the scenario seed.
 5. **One idea per pull request**, described in a sentence.
 
+## Fastest way
+
+`tools/join.sh` (see the README) sets everything up and can run an agent for you. Agents and
+people follow [`collab.md`](collab.md): `tools/collab.py start "idea"`, edit, `tools/collab.py
+finish`, and `tools/collab.py submit` when you beat the upstream best. The steps below are the
+same thing by hand.
+
 ## Workflow
 
 1. Fork, clone, and run `python3 evaluate.py --split smoke` to check your setup (Python 3.14).
@@ -34,8 +41,13 @@ on the same frozen simulator and scoring as everyone else's.
    with no secrets and a read-only token.
 2. **comment** posts the scores on your pull request: ✅ beats the current best, or ❌ with the
    reason.
-3. If it beats the best, a maintainer reviews the code and scores it on the **private held-out
-   scenarios** (seeds that are never published). It is merged if it holds up there too.
+3. If it beats the best, **holdout** scores it again in a sandbox (no network, no secrets) and
+   on held-out scenarios that nobody has seen; they are derived from a secret and change every
+   week. It compares your controller with `main` on the same scenarios and posts the result.
+   A maintainer reviews the code and merges it if it is better on both (or it is merged
+   automatically, if the maintainers have turned that on). `controller.py` may only import
+   `math`, `heapq` and a few other pure modules plus the `atc` package, and may not change the
+   simulator's data (`tools/ci_guard.py`).
 4. After the merge, **leaderboard** re-scores `main` and records it in `leaderboard/` as the new
    best — the next experiment has to beat yours. It also shows up on <https://atc.kyleboas.com>.
 

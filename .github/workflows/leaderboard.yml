@@ -1,34 +1,65 @@
 # After a merge to main: score the merged controller and update the leaderboard.
-# Only reviewed, merged code runs here.
+# Scoring runs with a read-only token; a separate job that runs no repository code commits the
+# result.
 name: leaderboard
 on:
   push:
     branches: [main]
     paths: [controller.py]
   workflow_dispatch:
-permissions:
-  contents: write
+    inputs:
+      author:
+        description: who to credit (defaults to the commit author)
+        required: false
+      note:
+        description: one-line description (defaults to the commit message)
+        required: false
+permissions: {}
 concurrency: leaderboard
 jobs:
-  record:
+  score:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
       - name: Score and record
         env:
-          AUTHOR: ${{ github.event.head_commit.author.username || github.actor }}
-          NOTE: ${{ github.event.head_commit.message }}
+          AUTHOR: ${{ inputs.author || github.event.head_commit.author.username || github.actor }}
+          NOTE: ${{ inputs.note || github.event.head_commit.message }}
         run: |
           python tools/ci_score.py --update-leaderboard --commit "${GITHUB_SHA::7}" \
             --author "$AUTHOR" --note "$(printf '%s' "$NOTE" | head -1 | cut -c1-200)" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard
+          path: |
+            leaderboard/best.json
+            leaderboard/results.jsonl
+
+  commit:
+    needs: score
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: leaderboard
+          path: new
       - name: Commit the leaderboard
         run: |
+          python3 -c 'import json; json.load(open("new/best.json")); [json.loads(l) for l in open("new/results.jsonl")]'
+          cp new/best.json new/results.jsonl leaderboard/
           git config user.name "atc-leaderboard[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add leaderboard/
+          git add -f leaderboard/best.json leaderboard/results.jsonl
           git diff --cached --quiet || git commit -m "leaderboard: ${GITHUB_SHA::7} [skip ci]"
           git push
