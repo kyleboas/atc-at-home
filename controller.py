@@ -71,7 +71,8 @@ def mva_ahead(x, y, hdg_true, gs, minutes=3.0):
     """Highest MVA along the next `minutes` on this heading."""
     ux, uy = W.unit(hdg_true)
     d = gs / 60 * minutes
-    return max(W.mva(x + ux * d * k / 6, y + uy * d * k / 6) for k in range(7))
+    n = max(6, int(d / 0.25))
+    return max(W.mva(x + ux * d * k / n, y + uy * d * k / n) for k in range(n + 1))
 
 
 def mva_clear_360(a, r=4.5):
@@ -1211,7 +1212,10 @@ class Approach:
                     if c.quiet(cs, 10):
                         self.level.pop(cs)
                         v = self.vec.get(cs)
-                        if v and v["phase"] in ("downwind", "missed_north"):
+                        if v and v["phase"] == "downwind" and a["alt"] > DOWNWIND_ALT + 300:
+                            c.send(out, C.vector(cs, altitude=max(DOWNWIND_ALT, alt_above(
+                                mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])))))
+                        elif v and v["phase"] in ("downwind", "missed_north"):
                             pass
                         elif v and v["phase"] == "base":
                             c.send(out, C.vector(cs, altitude=self.intercept_alt(a, "base")))
@@ -1302,6 +1306,14 @@ class Approach:
         if a["star"] == "BDEGA4" and not a["holding"] and a["hold_fix"] is None \
                 and (a["leg"] == "vectors" or (route and route[0] == "BRIXX")):
             alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
+            near = [o["cs"] for o in acs.values() if o is not a and o["airborne"] and abs(o["alt"] - alt) < 1500
+                    and dist((a["x"], a["y"]), (o["x"], o["y"])) < 4.0
+                    and self.vec.get(o["cs"], {}).get("phase") in ("downwind", "base")]
+            if cs in self.level:
+                alt = max(alt, self.level[cs][0])      # the probe's level-off stands (5-5-4)
+            elif near:
+                alt += 1000                            # 1,000 ft above vectored traffic close by (5-5-4)
+                self.level[cs] = (alt, near[0])
             c.send(out, C.vector(cs, heading=90, altitude=alt))
             out.append(C.maintain_speed(cs, kts=210, mode=None))
             self.vec[cs] = {"phase": "downwind"}
@@ -1534,7 +1546,17 @@ class Approach:
                 v["x_base"] = a["x"]
                 alt = self.intercept_alt(a, "base")
                 alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], BASE_T, a["gs"])))
-                if cs in self.level:
+                lv = self.level.get(cs)
+                o = acs.get(lv[1]) if lv else None
+                if lv and (o is None or not o["airborne"] or o["established"] or o["alt"] > a["alt"] + 500
+                           or dist((a["x"], a["y"]), (o["x"], o["y"])) > 5.0):
+                    self.level.pop(cs)               # the level-off's traffic is gone: base altitude
+                    lv = None
+                elif lv and o["alt"] < a["alt"] - 900:
+                    alt = max(alt, alt_above(o["alt"] + 1000))
+                    self.level[cs] = (alt, o["cs"])  # down to 1,000 ft above it (5-5-4)
+                    lv = None
+                if lv:
                     c.send(out, C.vector(cs, heading=180))
                 else:
                     c.send(out, C.vector(cs, heading=180, altitude=alt))
