@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KSFO data check map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1418; --panel:#161d23; --ink:#d8e0e6; --mute:#8495a3; --line:#2a343d; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:13px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; }
+  #wrap { display:flex; height:100%; }
+  #side { width:320px; min-width:320px; background:var(--panel); border-right:1px solid var(--line); overflow:auto; padding:10px 12px; box-sizing:border-box; }
+  #mapbox { position:relative; flex:1; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; cursor:grab; }
+  canvas.drag { cursor:grabbing; }
+  h1 { font-size:15px; margin:0 0 4px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:14px 0 6px; }
+  .small { font-size:11px; color:var(--mute); }
+  label { display:block; padding:1px 0; cursor:pointer; }
+  details { margin:2px 0; }
+  summary { cursor:pointer; color:var(--ink); }
+  .proc { display:flex; align-items:center; gap:6px; }
+  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; flex:none; }
+  .trs { margin-left:22px; font-size:11px; color:var(--mute); }
+  .trs label { display:inline-block; margin-right:8px; }
+  button { background:#24303a; color:var(--ink); border:1px solid #34424e; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; }
+  #tip { position:absolute; pointer-events:none; background:rgba(10,14,17,.94); border:1px solid #3a4652; border-radius:5px; padding:6px 8px; font-size:12px; max-width:420px; display:none; white-space:pre-wrap; }
+  #status { position:absolute; left:8px; bottom:6px; font-size:11px; color:var(--mute); background:rgba(15,20,24,.7); padding:2px 6px; border-radius:3px; }
+  #attrib { position:absolute; right:8px; bottom:6px; font-size:11px; color:var(--mute); background:rgba(15,20,24,.7); padding:2px 6px; border-radius:3px; }
+  #attrib a { color:#9ec3e6; }
+  #legsbox { font-size:11px; }
+  #legsbox table { border-collapse:collapse; width:100%; }
+  #legsbox td { border-top:1px solid var(--line); padding:1px 3px; vertical-align:top; }
+  .warn { color:#f0b35a; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <h1>KSFO data check</h1>
+    <div class="small" id="meta"></div>
+    <div class="small warn">Not for real-world navigation. Compare against the current FAA charts.</div>
+    <h2>Layers</h2>
+    <div id="layers"></div>
+    <h2>Procedures <button id="clearp">clear</button></h2>
+    <div class="small">Tick a procedure to draw all its transitions; untick transitions to hide them. Hover a fix for its constraints.</div>
+    <div id="procs"></div>
+    <h2>Selected legs</h2>
+    <div id="legsbox" class="small">none</div>
+  </div>
+  <div id="mapbox">
+    <canvas id="cv"></canvas>
+    <div id="tip"></div>
+    <div id="status"></div>
+    <div id="attrib">Procedures: FAA CIFP (public domain) · MVA: FAA AIS · Surface: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>, ODbL</div>
+  </div>
+</div>
+<script>
+const D = /*__DATA__*/null;
+const A = D.airport;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const tip = document.getElementById('tip'), statusEl = document.getElementById('status');
+document.getElementById('meta').textContent =
+  `${A.name} · ARP ${A.lat.toFixed(5)}, ${A.lon.toFixed(5)} · elev ${A.elevation_ft} ft · var ${A.magvar}°E · CIFP cycle ${A.source.cycle} (eff. ${A.source.effective}) · OSM ${D.surface.source.osm_base || ''}`;
+
+// ---------------------------------------------------------------- view
+let scale = 60, cx = 0, cy = 0;   // px per nm, centre in nm
+function resize() { const r = cv.parentElement.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
+  cv.width = r.width * dpr; cv.height = r.height * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); draw(); }
+function W() { return cv.clientWidth; } function H() { return cv.clientHeight; }
+function sx(x) { return W() / 2 + (x - cx) * scale; }
+function sy(y) { return H() / 2 - (y - cy) * scale; }
+function wx(px) { return cx + (px - W() / 2) / scale; }
+function wy(py) { return cy - (py - H() / 2) / scale; }
+
+// ---------------------------------------------------------------- layers
+const LAYERS = [
+  ['mva3', 'MVA sectors (NCT FUS3)', false], ['mva5', 'MVA sectors (NCT FUS5)', false],
+  ['aprons', 'Aprons / terminals (OSM)', true], ['runways', 'Runways (CIFP thresholds)', true],
+  ['ils', 'ILS localizer courses (15 nm)', true],
+  ['taxi', 'Taxiway graph (OSM)', true], ['taxinames', 'Taxiway names', true], ['taxinodes', 'Taxi graph nodes', false],
+  ['holds_s', 'Runway holding positions', true], ['stands', 'Stands / parking positions', true], ['gates', 'Gate labels (OSM nodes)', false],
+  ['fixes', 'All referenced fixes', true], ['fixlabels', 'Fix labels', true], ['navaids', 'Navaids', true],
+  ['rings', 'Range rings (10 nm)', true], ['constraints', 'Constraint labels on selected procedures', true],
+];
+const on = {};
+const lw = document.getElementById('layers');
+for (const [k, label, def] of LAYERS) {
+  on[k] = def;
+  const l = document.createElement('label');
+  l.innerHTML = `<input type="checkbox" ${def ? 'checked' : ''}> ${label}`;
+  l.querySelector('input').onchange = e => { on[k] = e.target.checked; draw(); };
+  lw.appendChild(l);
+}
+
+// ---------------------------------------------------------------- procedures UI
+const COLORS = ['#4ea1ff', '#ff7a59', '#5fd38d', '#e0b93e', '#c57bff', '#3fd0d0', '#ff5fa2', '#9fd356', '#f5904a', '#7aa2ff', '#e86d6d', '#57c7a5'];
+const sel = {};      // proc id -> {color, trans: Set(index)}
+let colorIdx = 0;
+const pw = document.getElementById('procs');
+for (const kind of ['STAR', 'SID', 'APPROACH']) {
+  const d = document.createElement('details'); d.open = kind !== 'APPROACH';
+  const list = D.procedures.filter(p => p.kind === kind);
+  d.innerHTML = `<summary>${kind === 'APPROACH' ? 'Approaches' : kind + 's'} (${list.length})</summary>`;
+  for (const p of list) {
+    const row = document.createElement('div');
+    const title = p.name ? `${p.id} — ${p.name}` : `${p.id}${p.runways && p.runways.length ? ' (rwy ' + p.runways.join(' ') + ')' : ''}`;
+    row.innerHTML = `<label class="proc"><input type="checkbox"><span class="swatch"></span>${title}${p.has_rf_legs ? ' <span class="small">[RF]</span>' : ''}</label><div class="trs" style="display:none"></div>`;
+    const cb = row.querySelector('input'), sw = row.querySelector('.swatch'), trs = row.querySelector('.trs');
+    p.transitions.forEach((t, i) => {
+      const l = document.createElement('label');
+      l.innerHTML = `<input type="checkbox" checked> ${t.transition || 'common'} <span title="${t.route_type_name}">(${t.segment.replace('_transition', '')})</span>`;
+      l.querySelector('input').onchange = e => { if (!sel[p.id]) return; e.target.checked ? sel[p.id].trans.add(i) : sel[p.id].trans.delete(i); updateLegs(); draw(); };
+      trs.appendChild(l);
+    });
+    cb.onchange = () => {
+      if (cb.checked) { const c = COLORS[colorIdx++ % COLORS.length]; sel[p.id] = { color: c, trans: new Set(p.transitions.map((_, i) => i)) }; sw.style.background = c; trs.style.display = 'block'; trs.querySelectorAll('input').forEach(x => x.checked = true); }
+      else { delete sel[p.id]; sw.style.background = 'transparent'; trs.style.display = 'none'; }
+      updateLegs(); draw();
+    };
+    row._cb = cb; d.appendChild(row);
+  }
+  pw.appendChild(d);
+}
+document.getElementById('clearp').onclick = () => { pw.querySelectorAll('.proc input').forEach(cb => { if (cb.checked) { cb.checked = false; cb.onchange(); } }); };
+
+function legText(l) {
+  const parts = [l.path_term, l.fix || ''];
+  if (l.role) parts.push('[' + l.role + ']');
+  if (l.course_deg != null) parts.push('crs ' + l.course_deg.toFixed(1) + (l.course_is_true ? 'T' : 'M'));
+  if (l.turn) parts.push('turn ' + l.turn);
+  if (l.distance_nm != null) parts.push(l.distance_nm + ' nm');
+  if (l.hold_time_min != null) parts.push(l.hold_time_min + ' min');
+  if (l.arc_center) parts.push(`arc r=${l.arc_radius_nm} nm ctr ${l.arc_center}`);
+  if (l.altitude_text) parts.push('alt ' + l.altitude_text);
+  if (l.speed_kt) parts.push(`spd ${l.speed_type || ''} ${l.speed_kt} kt`);
+  if (l.vertical_angle_deg) parts.push('VPA ' + l.vertical_angle_deg + '°');
+  if (l.rnp_nm) parts.push('RNP ' + l.rnp_nm);
+  if (l.flyover) parts.push('fly-over');
+  if (l.missed) parts.push('MISSED');
+  return parts.filter(Boolean).join('  ');
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function updateLegs() {
+  const box = document.getElementById('legsbox');
+  let h = '';
+  for (const p of D.procedures) {
+    if (!sel[p.id]) continue;
+    for (const i of sel[p.id].trans) {
+      const t = p.transitions[i];
+      h += `<div style="margin-top:6px;color:${sel[p.id].color}">${p.id} · ${t.transition || 'common'} (${t.route_type_name})</div><table>`;
+      for (const l of t.legs) h += `<tr><td>${l.seq}</td><td>${esc(legText(l))}</td></tr>`;
+      h += '</table>';
+    }
+  }
+  box.innerHTML = h || 'none';
+}
+
+// ---------------------------------------------------------------- drawing helpers
+function poly(pts, close) { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1]))); if (close) ctx.closePath(); }
+function text(s, x, y, color, font, align) { ctx.font = font || '11px system-ui'; ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.fillText(s, x, y); }
+function haloText(s, x, y, color, font, align) { ctx.font = font || '11px system-ui'; ctx.textAlign = align || 'left'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(15,20,24,.85)'; ctx.strokeText(s, x, y); ctx.fillStyle = color; ctx.fillText(s, x, y); }
+const mvaColor = v => { const t = Math.min(1, Math.max(0, (v - 1500) / 9000)); return `hsla(${120 - 110 * t},55%,45%,`; };
+const RWYS = Object.fromEntries(A.runways.map(r => [r.ident, r]));
+
+function draw() {
+  const w = W(), h = H();
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0f1418'; ctx.fillRect(0, 0, w, h);
+  // MVA
+  for (const ch of D.mva) {
+    if (!on[ch.chart === 'FUS3' ? 'mva3' : 'mva5']) continue;
+    for (const s of ch.sectors) {
+      ctx.beginPath();
+      for (const ring of [s.ring, ...s.holes]) ring.forEach((p, i) => i ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1])));
+      ctx.fillStyle = mvaColor(s.mva) + (ch.chart === 'FUS3' ? '0.16)' : '0.10)'); ctx.fill('evenodd');
+      ctx.strokeStyle = mvaColor(s.mva) + '0.7)'; ctx.lineWidth = 1; ctx.stroke();
+      let mx = 0, my = 0; s.ring.forEach(p => { mx += p[0]; my += p[1]; }); mx /= s.ring.length; my /= s.ring.length;
+      haloText(String(s.mva / 100 | 0), sx(mx), sy(my), mvaColor(s.mva) + '1)', 'bold 12px system-ui', 'center');
+    }
+  }
+  // range rings
+  if (on.rings) {
+    ctx.strokeStyle = '#26323b'; ctx.lineWidth = 1;
+    for (let r = 10; r <= 250; r += 10) { ctx.beginPath(); ctx.arc(sx(0), sy(0), r * scale, 0, 2 * Math.PI); ctx.stroke(); if (r * scale > 30) text(r + ' nm', sx(0) + 3, sy(r) - 3, '#3c4b57'); }
+  }
+  // aprons
+  if (on.aprons) {
+    for (const [n, p] of D.surface.aprons) { poly(p, true); ctx.fillStyle = '#1f2a33'; ctx.fill(); }
+    for (const [n, p] of D.surface.terminals) { poly(p, true); ctx.fillStyle = '#34414c'; ctx.fill(); }
+  }
+  // runways (from CIFP): pavement rectangle between physical ends, threshold bars
+  if (on.runways) {
+    const done = new Set();
+    for (const r of A.runways) {
+      const o = RWYS[r.opposite]; if (!o || done.has(r.ident)) continue; done.add(r.ident); done.add(o.ident);
+      const a = [r.runway_end_x, r.runway_end_y], b = [o.runway_end_x, o.runway_end_y];
+      const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy), hw = (r.width_ft / 6076.12) / 2;
+      const nx = -dy / L * hw, ny = dx / L * hw;
+      poly([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]], true);
+      ctx.fillStyle = '#56636e'; ctx.fill();
+      for (const t of [r, o]) {
+        const tx = t.threshold_x, ty = t.threshold_y;
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(tx + nx), sy(ty + ny)); ctx.lineTo(sx(tx - nx), sy(ty - ny)); ctx.stroke();
+        const u = t === r ? [dx / L, dy / L] : [-dx / L, -dy / L];
+        haloText(t.ident, sx(t.runway_end_x - u[0] * 0.12), sy(t.runway_end_y - u[1] * 0.12) + 4, '#ffffff', 'bold 12px system-ui', 'center');
+      }
+    }
+  }
+  if (on.ils) {
+    for (const l of A.localizers) {
+      const r = RWYS[l.runway]; if (!r) continue; const back = (r.true_bearing + 180) % 360 * Math.PI / 180;
+      const p0 = [r.threshold_x, r.threshold_y], p1 = [p0[0] + 15 * Math.sin(back), p0[1] + 15 * Math.cos(back)];
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = '#7f8fa0'; ctx.lineWidth = 1; poly([p0, p1]); ctx.stroke(); ctx.setLineDash([]);
+      haloText(`${l.ident} ${l.freq_mhz.toFixed(2)} GS ${l.gs_angle_deg}°`, sx(p1[0]), sy(p1[1]), '#9fb0c0');
+    }
+  }
+  // taxiways
+  const zoomedIn = scale > 1500;
+  if (on.taxi) {
+    for (const e of D.surface.edges) {
+      const kind = e[3];
+      ctx.strokeStyle = kind.startsWith('runway') ? 'rgba(255,255,255,.25)' : kind === 'parking_position' ? '#6b5a35' : kind === 'stand_link' ? '#8a6d2f' : kind === 'taxilane' ? '#a08a3a' : (e[2] ? '#d6b84a' : '#8d7d43');
+      ctx.lineWidth = kind === 'taxiway' ? (scale > 800 ? 2 : 1) : 1;
+      if (kind === 'stand_link') ctx.setLineDash([3, 3]);
+      poly(e[5]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  if (on.taxinames && scale > 250) {
+    const seen = {};
+    ctx.font = '10px system-ui';
+    for (const e of D.surface.edges) {
+      if (e[3] !== 'taxiway' && e[3] !== 'taxilane') continue; if (!e[2]) continue;
+      if (!zoomedIn && e[4] < 600) continue;
+      const g = e[5], m = g[Math.floor(g.length / 2)], m0 = g[Math.max(0, Math.floor(g.length / 2) - 1)];
+      const p = [(m[0] + m0[0]) / 2, (m[1] + m0[1]) / 2];
+      const key = e[2] + ':' + Math.round(sx(p[0]) / 80) + ':' + Math.round(sy(p[1]) / 80);
+      if (seen[key]) continue; seen[key] = 1;
+      haloText(e[2], sx(p[0]), sy(p[1]) + 3, '#ffe27a', 'bold 10px system-ui', 'center');
+    }
+  }
+  if (on.taxinodes && scale > 600) {
+    for (const k in D.surface.nodes) { const n = D.surface.nodes[k]; ctx.fillStyle = '#bba64e'; ctx.fillRect(sx(n[0]) - 1.5, sy(n[1]) - 1.5, 3, 3); }
+  }
+  if (on.holds_s && scale > 200) {
+    for (const k in D.surface.nodes) { const n = D.surface.nodes[k]; if (!n[2]) continue; ctx.fillStyle = n[2] === 'ILS' ? '#ff9f43' : '#ff4d4d'; ctx.beginPath(); ctx.arc(sx(n[0]), sy(n[1]), 3, 0, 7); ctx.fill(); }
+    ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 1.5; for (const l of D.surface.hold_lines) { poly(l); ctx.stroke(); }
+  }
+  if (on.stands && scale > 400) {
+    for (const s of D.surface.stands) { ctx.fillStyle = '#7fd1ff'; ctx.beginPath(); ctx.arc(sx(s[1]), sy(s[2]), 2.5, 0, 7); ctx.fill(); if (s[0] && scale > 1500) haloText(s[0], sx(s[1]) + 4, sy(s[2]) + 3, '#7fd1ff', '10px system-ui'); }
+  }
+  if (on.gates && scale > 1500) for (const g of D.surface.gates) haloText(g[0] || '', sx(g[1]), sy(g[2]), '#c2a8ff', '10px system-ui');
+  if (D.surface.tower && scale > 300) { const t = D.surface.tower; ctx.fillStyle = '#ffffff'; ctx.fillRect(sx(t[0]) - 3, sy(t[1]) - 3, 6, 6); haloText('TWR', sx(t[0]) + 5, sy(t[1]) - 4, '#ffffff', '10px system-ui'); }
+
+  // fixes
+  const selFix = new Set();
+  for (const p of D.procedures) if (sel[p.id]) for (const i of sel[p.id].trans) for (const l of p.transitions[i].legs) { if (l.fix_ref) selFix.add(l.fix_ref); }
+  for (const k in D.fixes) {
+    const f = D.fixes[k]; if (f.x == null) continue;
+    const nav = f.kind === 'VHF navaid' || f.kind === 'NDB' || f.kind === 'localizer';
+    if (f.kind === 'runway threshold' || f.kind === 'airport') continue;
+    if (nav ? !on.navaids : !(on.fixes || selFix.has(k))) continue;
+    const X = sx(f.x), Y = sy(f.y); if (X < -50 || Y < -50 || X > w + 50 || Y > h + 50) continue;
+    const hl = selFix.has(k);
+    ctx.strokeStyle = nav ? '#6fc3ff' : hl ? '#ffffff' : '#93a4b3'; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 1.2;
+    if (nav) { ctx.beginPath(); for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; ctx[i ? 'lineTo' : 'moveTo'](X + 6 * Math.cos(a), Y + 6 * Math.sin(a)); } ctx.closePath(); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.moveTo(X, Y - 5); ctx.lineTo(X + 4.5, Y + 3); ctx.lineTo(X - 4.5, Y + 3); ctx.closePath(); hl ? ctx.fill() : ctx.stroke(); }
+    if (on.fixlabels && (hl || scale > 8 || nav)) haloText(f.ident, X + 6, Y - 4, nav ? '#6fc3ff' : hl ? '#ffffff' : '#93a4b3', hl ? 'bold 11px system-ui' : '10px system-ui');
+  }
+  // procedures
+  for (const p of D.procedures) {
+    if (!sel[p.id]) continue; const c = sel[p.id].color;
+    for (const i of sel[p.id].trans) {
+      const t = p.transitions[i];
+      for (const g of t.geom) {
+        ctx.strokeStyle = c; ctx.lineWidth = g.style.includes('arc') ? 3 : 2;
+        ctx.setLineDash(g.style.includes('missed') ? [8, 5] : g.style.includes('stub') ? [3, 4] : []);
+        ctx.globalAlpha = g.style.includes('missed') ? 0.8 : 1;
+        poly(g.pts); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+        const a = g.pts[g.pts.length - 2], b = g.pts[g.pts.length - 1];
+        if (a && b && !g.style.includes('hold')) {  // arrow head
+          const ang = Math.atan2(sy(b[1]) - sy(a[1]), sx(b[0]) - sx(a[0])); const X = sx(b[0]), Y = sy(b[1]);
+          ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(X - 9 * Math.cos(ang - .35), Y - 9 * Math.sin(ang - .35)); ctx.lineTo(X - 9 * Math.cos(ang + .35), Y - 9 * Math.sin(ang + .35)); ctx.closePath(); ctx.fill();
+        }
+        if (g.label) haloText(g.label, sx(b[0]) + 4, sy(b[1]) + 12, c, '10px system-ui');
+      }
+      if (on.constraints) {
+        for (const l of t.legs) {
+          const f = l.fix_ref && D.fixes[l.fix_ref]; if (!f || f.x == null) continue;
+          const bits = [];
+          if (l.altitude_text) bits.push(l.altitude_text);
+          if (l.speed_kt) bits.push((l.speed_type === 'at or below' ? '≤' : l.speed_type === 'at or above' ? '≥' : '') + l.speed_kt + 'K');
+          if (!bits.length) continue;
+          haloText(bits.join(' '), sx(f.x) + 6, sy(f.y) + 10, c, '10px system-ui');
+        }
+      }
+    }
+  }
+  statusEl.textContent = `scale ${scale < 100 ? scale.toFixed(1) : Math.round(scale)} px/nm · centre x ${cx.toFixed(2)} y ${cy.toFixed(2)} nm`;
+}
+
+// ---------------------------------------------------------------- interaction
+let drag = null;
+cv.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY, cx, cy }; cv.classList.add('drag'); });
+window.addEventListener('mouseup', () => { drag = null; cv.classList.remove('drag'); });
+window.addEventListener('mousemove', e => {
+  if (drag) { cx = drag.cx - (e.clientX - drag.x) / scale; cy = drag.cy + (e.clientY - drag.y) / scale; draw(); return; }
+  const r = cv.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) { tip.style.display = 'none'; return; }
+  hover(e.clientX - r.left, e.clientY - r.top);
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); const r = cv.getBoundingClientRect(); const px = e.clientX - r.left, py = e.clientY - r.top;
+  const bx = wx(px), by = wy(py); scale = Math.min(40000, Math.max(1, scale * Math.exp(-e.deltaY * 0.0015)));
+  cx = bx - (px - W() / 2) / scale; cy = by + (py - H() / 2) / scale; draw();
+}, { passive: false });
+function distSeg(px, py, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1]; const L = dx * dx + dy * dy; let t = L ? ((px - a[0]) * dx + (py - a[1]) * dy) / L : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(px - a[0] - t * dx, py - a[1] - t * dy); }
+function hover(px, py) {
+  const X = wx(px), Y = wy(py);
+  const lat = A.lat + Y / 60, lon = A.lon + X / (60 * Math.cos(A.lat * Math.PI / 180));
+  let best = null, bd = 9 / scale;
+  for (const k in D.fixes) { const f = D.fixes[k]; if (f.x == null) continue; const d = Math.hypot(f.x - X, f.y - Y); if (d < bd) { bd = d; best = ['fix', k]; } }
+  if (!best && (on.taxi || on.stands) && scale > 150) {
+    let ed = 6 / scale;
+    for (const s of D.surface.stands) { const d = Math.hypot(s[1] - X, s[2] - Y); if (d < ed) { ed = d; best = ['stand', s]; } }
+    if (!best) for (const e of D.surface.edges) { const g = e[5]; for (let i = 1; i < g.length; i++) { const d = distSeg(X, Y, g[i - 1], g[i]); if (d < ed) { ed = d; best = ['edge', e]; } } }
+  }
+  if (!best && (on.mva3 || on.mva5)) {
+    for (const ch of D.mva) { if (!on[ch.chart === 'FUS3' ? 'mva3' : 'mva5']) continue; for (const s of ch.sectors) if (inRing(X, Y, s.ring) && !s.holes.some(hh => inRing(X, Y, hh))) { best = ['mva', s, ch.chart]; break; } if (best) break; }
+  }
+  let html = '';
+  if (best && best[0] === 'fix') {
+    const f = D.fixes[best[1]];
+    html = `<b>${esc(f.ident)}</b> ${esc(f.kind)} (${esc(f.section || '')})${f.name && f.name !== f.ident ? ' — ' + esc(f.name) : ''}${f.freq_mhz ? ' ' + f.freq_mhz : ''}\n${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}\nx ${f.x.toFixed(3)} nm, y ${f.y.toFixed(3)} nm, ${Math.hypot(f.x, f.y).toFixed(1)} nm @ ${((Math.atan2(f.x, f.y) * 180 / Math.PI + 360) % 360).toFixed(0)}°T from ARP`;
+    for (const p of D.procedures) { if (!sel[p.id]) continue; for (const i of sel[p.id].trans) { const t = p.transitions[i]; for (const l of t.legs) if (l.fix_ref === best[1]) html += `\n<span style="color:${sel[p.id].color}">${p.id} ${t.transition || 'common'}: ${esc(legText(l))}</span>`; } }
+  } else if (best && best[0] === 'edge') {
+    const e = best[1]; html = `<b>${esc(e[2] || '(unnamed)')}</b> ${e[3]} · ${Math.round(e[4])} ft\n${e[0]} — ${e[1]}`;
+  } else if (best && best[0] === 'stand') {
+    html = `<b>stand ${esc(best[1][0] || '(no ref)')}</b>`;
+  } else if (best && best[0] === 'mva') {
+    html = `<b>MVA ${best[1].mva} ft</b> · sector ${esc(best[1].name)} (${best[2]})`;
+  }
+  statusEl.textContent = `x ${X.toFixed(3)} y ${Y.toFixed(3)} nm · ≈ ${lat.toFixed(5)}, ${lon.toFixed(5)} · scale ${Math.round(scale)} px/nm`;
+  if (html) { tip.innerHTML = html; tip.style.display = 'block'; tip.style.left = Math.min(px + 14, W() - 330) + 'px'; tip.style.top = (py + 14) + 'px'; } else tip.style.display = 'none';
+}
+function inRing(x, y, ring) { let ins = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, yi] = ring[i], [xj, yj] = ring[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) ins = !ins; } return ins; }
+// URL hash: #p=SERFR4,I28L&s=12&c=0,0&l=mva3,-fixes  (procedures, px/nm, centre nm, layers on/-off)
+function applyHash() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.get('s')) scale = +q.get('s');
+  if (q.get('c')) { const [a, b] = q.get('c').split(',').map(Number); cx = a; cy = b; }
+  for (const k of (q.get('l') || '').split(',').filter(Boolean)) { const off = k.startsWith('-'); const n = k.replace('-', ''); if (n in on) { on[n] = !off; } }
+  lw.querySelectorAll('input').forEach((el, i) => el.checked = on[LAYERS[i][0]]);
+  const want = new Set((q.get('p') || '').split(',').filter(Boolean));
+  pw.querySelectorAll('.proc input').forEach(cb => {
+    const id = cb.closest('div').parentElement && cb.parentElement.textContent.trim().split(/\s/)[0];
+    if (want.has(id) && !cb.checked) { cb.checked = true; cb.onchange(); }
+  });
+}
+window.addEventListener('resize', resize);
+applyHash();
+resize();
+</script>
+</body>
+</html>

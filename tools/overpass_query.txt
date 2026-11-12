@@ -1,0 +1,9 @@
+[out:json][timeout:120];
+(
+  way["aeroway"](37.595,-122.405,37.645,-122.350);
+  node["aeroway"](37.595,-122.405,37.645,-122.350);
+  relation["aeroway"](37.595,-122.405,37.645,-122.350);
+);
+out body;
+>;
+out skel qt;

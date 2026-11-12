@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.DS_Store
+raw/
+out/
+reference/atc-manual.txt
+results.jsonl
+results.tsv
+status.json
+notes.md
+autoresearch.log
+agent.out
+run.json
+result.json

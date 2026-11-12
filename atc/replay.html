@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSFO AI ATC replay</title>
+<style>
+  :root { --bg:#0b0e12; --panel:#12161c; --line:#262c35; --text:#d6dde6; --muted:#7d8590;
+          --gnd:#8b949e; --twr:#3fb950; --app:#f0883e; --dep:#58a6ff; --ctr:#bc8cff; --bad:#f85149; --warn:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 ui-monospace, Menlo, monospace;
+         display:grid; grid-template-columns: 1fr 460px; grid-template-rows: auto 1fr; height:100vh; }
+  header { grid-column:1/3; display:flex; flex-wrap:wrap; gap:14px; align-items:center; padding:7px 12px;
+           border-bottom:1px solid var(--line); background:var(--panel); }
+  header b { color:var(--text); font-weight:600; }
+  .muted { color:var(--muted); }
+  a { color:#58a6ff; }
+  #wrap { position:relative; min-height:0; }
+  canvas { width:100%; height:100%; display:block; }
+  #side { border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+  .bar { padding:7px 10px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .bar input[type=range] { flex:1; min-width:120px; }
+  button, select { background:#1b2129; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 8px; font:inherit; }
+  button.on { border-color:#58a6ff; color:#58a6ff; }
+  #log { overflow:auto; flex:1; padding:4px 0; font-size:12px; }
+  .row { padding:1px 10px; white-space:pre-wrap; cursor:pointer; }
+  .row:hover { background:#161b22; }
+  .row .t { color:var(--muted); }
+  .GND .who { color:var(--gnd); } .TWR .who { color:var(--twr); } .APP .who { color:var(--app); } .DEP .who { color:var(--dep); } .CTR .who { color:var(--ctr); }
+  .row.hard { color:var(--bad); background:#f8514912; } .row.rule { color:var(--warn); } .row.service { color:var(--muted); }
+  .row.invalid { color:var(--bad); } .row.future { opacity:.22; }
+  .row.sel { background:#1f6feb26; box-shadow: inset 3px 0 0 #58a6ff; }
+  .row.talk { background:#d2992226; }
+  #now { padding:6px 10px; border-bottom:1px solid var(--line); min-height:34px; font-size:12px; }
+  #now .lbl { color:var(--muted); }
+  #selcard { padding:6px 10px; border-bottom:1px solid var(--line); font-size:12px; display:none; background:#0f1a2b; }
+  #selcard b { color:#58a6ff; }
+  canvas { cursor:crosshair; touch-action:none; }
+  @media (max-width: 820px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 52vh minmax(0, 1fr); height: 100dvh; font-size: 12px; }
+    header { grid-column: 1; gap: 6px 10px; padding: 6px 8px; font-size: 11px; }
+    header > span:nth-child(3) { display: none; }          /* colour legend: no room on a phone */
+    #side { border-left: 0; border-top: 1px solid var(--line); }
+    .bar { padding: 5px 8px; gap: 6px; }
+    button, select { padding: 6px 10px; }
+    #log { font-size: 11px; }
+    #now, #selcard { font-size: 11px; }
+  }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+  #layers label { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span><b id="title">KSFO AI ATC replay</b></span>
+  <span class="muted" id="stats"></span>
+  <span><span class="dot" style="background:var(--gnd)"></span>ground <span class="dot" style="background:var(--twr)"></span>tower
+    <span class="dot" style="background:var(--app)"></span>approach <span class="dot" style="background:var(--dep)"></span>departure
+    <span class="dot" style="background:var(--ctr)"></span>center <span class="dot" style="background:var(--bad)"></span>violation</span>
+  <span id="back"></span>
+</header>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="side">
+  <div class="bar">
+    <button id="play">Play</button>
+    <select id="speed"><option>4</option><option selected>16</option><option>32</option><option>64</option><option>128</option></select>
+    <input type="range" id="scrub" min="0" value="0">
+    <span id="clock">00:00</span>
+  </div>
+  <div class="bar">
+    view <button id="vAir" class="on">airspace</button><button id="vTerm">terminal</button><button id="vField">field</button><button id="vGnd">ground</button>
+    <span class="muted">· scroll to zoom</span>
+  </div>
+  <div class="bar" id="layers">
+    <label><input type="checkbox" data-l="star" checked> STARs</label>
+    <label><input type="checkbox" data-l="approach" checked> approaches</label>
+    <label><input type="checkbox" data-l="sid" checked> SIDs</label>
+    <label><input type="checkbox" data-l="mva" checked> MVA</label>
+    <label><input type="checkbox" data-l="taxi" checked> taxiways</label>
+  </div>
+  <div class="bar" id="filters">
+    <label><input type="checkbox" data-f="GND" checked> GND</label>
+    <label><input type="checkbox" data-f="TWR" checked> TWR</label>
+    <label><input type="checkbox" data-f="APP" checked> APP</label>
+    <label><input type="checkbox" data-f="DEP" checked> DEP</label>
+    <label><input type="checkbox" data-f="pilot" checked> pilots</label>
+    <label><input type="checkbox" data-f="mon" checked> monitor</label>
+    <label><input type="checkbox" id="fFollow" checked> follow</label>
+    <label><input type="checkbox" id="fSel"> selected only</label>
+  </div>
+  <div id="now"><span class="lbl">now speaking ·</span> <span id="nowtxt" class="muted">—</span></div>
+  <div id="selcard"></div>
+  <div id="log"></div>
+</div>
+<script>
+const DATA = /*DATA*/null;
+const c = document.getElementById('c'), ctx = c.getContext('2d');
+const frames = DATA.frames, tr = DATA.transcript, W = DATA.world;
+const $ = id => document.getElementById(id);
+$('scrub').max = frames.length - 1;
+$('title').textContent = `${W.field} · ${W.config}: land ${W.arr.join('/')}, depart ${W.dep.join('/')} · seed ${DATA.seed} (${DATA.level})` + (DATA.commit ? ` · controller ${DATA.commit}` : '');
+const s = DATA.summary;
+$('stats').innerHTML = `cost <b>${s.cost}</b> · hard <b>${s.hard}</b> · rule <b>${s.rule}</b> · go-arounds <b>${s.go_arounds}</b> · movements <b>${s.movements}</b> · CIFP ${W.cycle}`;
+if (DATA.back) $('back').innerHTML = `<a href="${DATA.back}">← all replays</a>`;
+const FREQ = { g:'#8b949e', t:'#3fb950', a:'#f0883e', d:'#58a6ff', c:'#bc8cff', '-':'#8b949e' };
+const GROUND = new Set(['gate_req','push_hold','pushing','pushed','taxiing','holding_short','clear','taxi_in','pending']);
+const RUNWAY = new Set(['exiting','lining_up','lined_up','rolling','landing_roll','rto']);
+const bad = {};
+tr.forEach(l => { if (l.kind === 'hard' && l.cs) (bad[l.cs] ||= []).push(l.t); });
+const posOf = l => ['GND','TWR','APP','DEP','CTR'].includes(l.who) ? (l.who === 'CTR' ? 'DEP' : l.who) : (['hard','rule','service','invalid','error'].includes(l.kind) ? 'mon' : (l.kind === 'atis' ? 'TWR' : 'pilot'));
+const log = $('log');
+const esc = s => s.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]));
+const fmt = t => `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+tr.forEach(l => {
+  const d = document.createElement('div');
+  d.className = 'row ' + l.who + ' ' + (['hard','rule','service','invalid'].includes(l.kind) ? l.kind : '');
+  d.innerHTML = `<span class="t">${fmt(l.t)}</span> <span class="who">${l.who.padEnd(7)}</span> ${esc(l.text)}`;
+  d.onclick = () => { idx = Math.max(0, frames.findIndex(f => f[0] >= l.t) - 3); acc = frac = 0;
+    if (l.cs) { sel = l.cs; focusOn(l.cs); } draw(); };
+  log.appendChild(d); l.el = d; l.pos = posOf(l);
+});
+
+let idx = 0, frac = 0, playing = false, last = 0, acc = 0;
+let sel = null, drawn = [], lastTalk = {};                 // selected callsign; screen positions of drawn targets
+const POSCOL = { GND:'#8b949e', TWR:'#3fb950', APP:'#f0883e', DEP:'#58a6ff', CTR:'#bc8cff', ATC:'#bc8cff' };
+const TALK_S = 6;                            // a transmission "lights up" its aircraft for 6 s
+let view = { cx:4, cy:-4, half:52 };
+const presets = { vAir:{cx:4,cy:-4,half:52}, vTerm:{cx:6,cy:-3,half:18}, vField:{cx:0,cy:0,half:3.2}, vGnd:{cx:-0.1,cy:0.05,half:0.9} };
+function setView(id) { view = {...presets[id]}; for (const k in presets) $(k).classList.toggle('on', k === id); draw(); }
+for (const k in presets) $(k).onclick = () => setView(k);
+function focusOn(cs) {
+  const f = frames[idx][1].find(a => a[0] === cs); if (!f) return;
+  view.cx = f[1]; view.cy = f[2];
+}
+function resize() { const r = c.parentElement.getBoundingClientRect(); c.width = r.width * devicePixelRatio; c.height = r.height * devicePixelRatio; draw(); }
+function P(x, y) {
+  const k = Math.min(c.width, c.height) / (2 * view.half);
+  return [c.width/2 + (x - view.cx) * k, c.height/2 - (y - view.cy) * k, k];
+}
+function line(pts, color, dash, w) {
+  ctx.strokeStyle = color; ctx.lineWidth = (w || 1) * devicePixelRatio; ctx.setLineDash(dash ? dash.map(d => d*devicePixelRatio) : []);
+  ctx.beginPath(); pts.forEach((p, i) => { const q = P(p[0], p[1]); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }); ctx.stroke(); ctx.setLineDash([]);
+}
+const layer = () => { const o = {}; document.querySelectorAll('#layers input').forEach(i => o[i.dataset.l] = i.checked); return o; };
+const PROC = { star:['#6b4f2a',[6,5]], transition:['#7a5f34',[4,4]], approach:['#2f6f52',null], sid:['#24496e',[5,5]] };
+function drawWorld(k) {
+  const dpr = devicePixelRatio, L = layer();
+  // NorCal TRACON minimum vectoring altitudes (FUS3)
+  if (L.mva) for (const m of W.mva) {
+    line([...m.ring, m.ring[0]], '#1a222c', null, 1);
+    if (k > 9) { let sx = 0, sy = 0; m.ring.forEach(p => { sx += p[0]; sy += p[1]; });
+      const q = P(sx / m.ring.length, sy / m.ring.length); ctx.fillStyle = '#3b4552'; ctx.fillText(String(m.mva / 100), q[0] - 8*dpr, q[1]); }
+  }
+  // range rings about the ARP: tower 5 nm, 10/20/30, approach airspace 50 nm
+  for (const [r, col] of [[W.airspace_nm, '#2d343e'], [W.tower_nm, '#1f3a26'], [10, '#161b21'], [20, '#161b21'], [30, '#161b21']]) {
+    const [x, y] = P(0, 0); ctx.strokeStyle = col; ctx.lineWidth = dpr; ctx.beginPath(); ctx.arc(x, y, r*k, 0, 7); ctx.stroke();
+  }
+  // procedures as coded in CIFP (RF legs as arcs, holds as racetracks; missed approaches dashed)
+  for (const p of W.procs) {
+    const on = p.kind === 'transition' ? L.approach : L[p.kind]; if (!on) continue;
+    const [col, dash] = PROC[p.kind];
+    line(p.pts, col, dash, p.kind === 'approach' ? 1.5 : 1);
+    if (p.missed) line(p.missed, '#4b3a66', [2, 4]);
+    for (const h of p.holds) line(h, '#4b3a66', [2, 3]);
+  }
+  // fixes and constraint labels
+  const lab = {};
+  for (const p of W.procs) { const on = p.kind === 'transition' ? L.approach : L[p.kind]; if (on) for (const [f, t] of p.labels) (lab[f] ||= new Set()).add(t); }
+  for (const [name, [fx, fy]] of Object.entries(W.fixes)) {
+    const [x, y] = P(fx, fy); if (x < -40 || y < -40 || x > c.width + 40 || y > c.height + 40) continue;
+    ctx.fillStyle = '#6e7681';
+    ctx.beginPath(); ctx.moveTo(x, y - 3.5*dpr); ctx.lineTo(x + 3.5*dpr, y + 2.5*dpr); ctx.lineTo(x - 3.5*dpr, y + 2.5*dpr); ctx.closePath(); ctx.fill();
+    if (k > 5) { ctx.fillStyle = '#8b949e'; ctx.fillText(name, x + 5*dpr, y + 3*dpr); }
+    if (k > 14 && lab[name]) { ctx.fillStyle = '#a07a4a'; ctx.fillText([...lab[name]].join(' / '), x + 5*dpr, y + 13*dpr); }
+  }
+  // taxiways (OSM) at ground zoom, with names
+  if (L.taxi && k > 60) {
+    const named = {};
+    for (const [name, kind, g] of W.taxi) {
+      line(g, kind === 0 ? '#5c4d1f' : (kind === 1 ? '#3a3420' : '#30363d'), null, kind === 0 ? 2.5 : 1);
+      if (name && kind === 0) (named[name] ||= []).push(g[Math.floor(g.length / 2)]);
+    }
+    if (k > 140) { ctx.fillStyle = '#c9a227'; ctx.font = `${9*dpr}px ui-monospace, Menlo, monospace`;
+      for (const [name, pts] of Object.entries(named)) for (let i = 0; i < pts.length; i += Math.max(1, Math.floor(pts.length / 3))) {
+        const q = P(pts[i][0], pts[i][1]); ctx.fillText(name, q[0] + 3*dpr, q[1] - 3*dpr); }
+      if (k > 400) { ctx.fillStyle = '#6e7681'; for (const [n, p] of Object.entries(W.stands)) { const q = P(p[0], p[1]); ctx.fillText(n, q[0] + 3*dpr, q[1] + 3*dpr); } }
+      ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`; }
+  }
+  // all runways, to scale (in-use ends labelled)
+  for (const r of W.runways) {
+    const w = Math.max(2*dpr, r.width_ft / 6076.12 * k);
+    const a = P(r.start[0], r.start[1]), b = P(r.end[0], r.end[1]);
+    ctx.strokeStyle = r.in_use.length ? '#9aa4b0' : '#5a626d'; ctx.lineWidth = w; ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    if (k > 25) { ctx.fillStyle = '#c9d1d9';
+      for (const id of [r.a, r.b]) { const q = P(r.thr[id][0], r.thr[id][1]); ctx.fillStyle = r.in_use.includes(id) ? '#e6edf3' : '#6e7681'; ctx.fillText(id, q[0] + 4*dpr, q[1] + 12*dpr); } }
+  }
+  if (k > 25) { const q = P(W.tower[0], W.tower[1]); ctx.fillStyle = '#3fb950'; ctx.fillRect(q[0] - 2*dpr, q[1] - 2*dpr, 4*dpr, 4*dpr); }
+}
+function draw() {
+  const dpr = devicePixelRatio, [, , k] = P(0, 0);
+  ctx.fillStyle = '#0b0e12'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
+  drawWorld(k);
+  const [t0, acs0] = frames[idx];
+  // frames are 2 s apart: draw positions interpolated between this frame and the next
+  const nxt = frac > 0 && idx < frames.length - 1 ? frames[idx + 1] : null;
+  const t = nxt ? Math.round(t0 + (nxt[0] - t0) * frac) : t0;
+  const later = nxt ? new Map(nxt[1].map(a => [a[0], a])) : null;
+  const acs = acs0.map(a => interp(a, later && later.get(a[0]), frac));
+  const talking = {};                        // cs -> colour of whoever is transmitting to/from it
+  let nowLine = null;
+  for (const l of tr) {
+    if (l.t > t) break;
+    if (l.t > t - TALK_S && l.cs && !['hard','rule','service','invalid','error','atis'].includes(l.kind)) {
+      talking[l.cs] = l.who === l.cs ? '#e6edf3' : (POSCOL[l.who] || '#e6edf3');
+      nowLine = l;
+    }
+  }
+  lastTalk = talking;
+  drawn = [];
+  ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
+  for (const [cs, x, y, alt, gs, leg, intent, wake, freq, hdg, hdgA, altA, rwy, type, nfix] of acs) {
+    const [px, py] = P(x, y);
+    if (px < -50 || py < -50 || px > c.width + 50 || py > c.height + 50) continue;
+    const isBad = (bad[cs] || []).some(bt => Math.abs(bt - t) <= 20);
+    const col = isBad ? '#f85149' : (FREQ[freq] || '#8b949e');
+    const air = !GROUND.has(leg) && !RUNWAY.has(leg);
+    const ground = GROUND.has(leg);
+    if (ground && k < 60) continue;
+    if (RUNWAY.has(leg) && k < 12) continue;
+    const isSel = cs === sel;
+    drawn.push([cs, px, py]);
+    ctx.fillStyle = col; ctx.strokeStyle = col;
+    if (air) {
+      const r = (wake === 'H' || wake === 'J' ? 4 : 3) * dpr; ctx.fillRect(px - r, py - r, 2*r, 2*r);
+      const h = hdg * Math.PI / 180, len = gs / 60 * k;          // one-minute leader line
+      ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.sin(h)*len, py - Math.cos(h)*len); ctx.stroke();
+    } else { ctx.beginPath(); ctx.arc(px, py, 3*dpr, 0, 7); ctx.fill(); }
+    if (isBad) { ctx.lineWidth = 2*dpr; ctx.beginPath(); ctx.arc(px, py, 12*dpr, 0, 7); ctx.stroke(); }
+    // the callsign is the only indicator: selected = blue highlight, talking = speaker's colour + ◀
+    const label = cs + (talking[cs] ? ' ◀' : '');
+    if (isSel) {
+      ctx.font = `bold ${10*dpr}px ui-monospace, Menlo, monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = '#1f6feb'; ctx.fillRect(px + 6*dpr, py - 13*dpr, tw + 4*dpr, 13*dpr);
+    }
+    ctx.fillStyle = isSel ? '#ffffff' : (talking[cs] || '#d6dde6');
+    ctx.fillText(label, px + 8*dpr, py - 3*dpr);
+    ctx.font = `${10*dpr}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = '#7d8590';
+    ctx.fillText(air ? `${String(Math.round(alt/100)).padStart(3,'0')} ${gs} ${leg}${nfix ? ' ' + nfix : ''}` : leg.replace('_',' ') + (nfix ? ' ' + nfix : ''), px + 8*dpr, py + 9*dpr);
+    // assigned heading / altitude from approach or departure (third line of the data block)
+    if (air && (hdgA >= 0 || altA >= 0)) {
+      ctx.fillStyle = '#e3b341';
+      const arrow = altA >= 0 ? (altA > alt + 100 ? '↑' : altA < alt - 100 ? '↓' : '=') : '';
+      ctx.fillText(`${hdgA >= 0 ? 'H' + String(hdgA).padStart(3, '0') + ' ' : ''}${altA >= 0 ? arrow + String(Math.round(altA/100)).padStart(3,'0') : ''}`, px + 8*dpr, py + 20*dpr);
+    }
+  }
+  // "now speaking" bar and the selected aircraft's card
+  $('nowtxt').innerHTML = nowLine ? `<span style="color:${l2col(nowLine)}">${esc(nowLine.who)}</span> ${esc(nowLine.text)}` : '—';
+  const sa = sel && acs.find(a => a[0] === sel);
+  $('selcard').style.display = sel ? 'block' : 'none';
+  if (sel) {
+    if (sa) {
+      const [, , , alt, gs, leg, intent, wake, freq, hdg, hdgA, altA, rwy, type, nfix] = sa;
+      const fq = { g:'ground', t:'tower', a:'approach', d:'departure', c:'center' }[freq] || '-';
+      $('selcard').innerHTML = `<b>${esc(sel)}</b> · ${esc(type)} (${{J:'super',H:'heavy',L:'large',S:'small'}[wake] || wake}) · ${intent === 'd' ? 'departure' : 'arrival'} runway ${esc(rwy)} · on <b>${fq}</b><br>` +
+        `${esc(leg)}${nfix ? ' → ' + esc(nfix) : ''} · ${Math.round(alt)} ft · ${Math.round(gs)} kt · hdg ${String(Math.round((hdg - W.magvar + 360) % 360)).padStart(3,'0')}M` +
+        (hdgA >= 0 || altA >= 0 ? ` · assigned ${hdgA >= 0 ? 'H' + String(hdgA).padStart(3,'0') : ''} ${altA >= 0 ? altA + ' ft' : ''}` : '') +
+        ` <span class="muted">· esc / click empty space to clear</span>`;
+    } else $('selcard').innerHTML = `<b>${esc(sel)}</b> <span class="muted">not on the scope at this time · esc to clear</span>`;
+  }
+  $('clock').textContent = fmt(t); $('scrub').value = idx;
+  const show = {}; document.querySelectorAll('#filters input[data-f]').forEach(i => show[i.dataset.f] = i.checked);
+  let lastVis = null;
+  const onlySel = $('fSel').checked && sel;
+  for (const l of tr) {
+    const vis = show[l.pos] !== false && (!onlySel || l.cs === sel); l.el.style.display = vis ? '' : 'none';
+    l.el.classList.toggle('future', l.t > t);
+    l.el.classList.toggle('sel', !!sel && l.cs === sel);
+    l.el.classList.toggle('talk', l.t <= t && l.t > t - TALK_S && !!l.cs && l.pos !== 'mon');
+    if (vis && l.t <= t) lastVis = l.el;
+  }
+  if ($('fFollow').checked && lastVis && playing) lastVis.scrollIntoView({ block:'nearest' });
+}
+function l2col(l) { return l.who === l.cs ? '#e6edf3' : (POSCOL[l.who] || '#e6edf3'); }
+function interp(a, b, f) {
+  // linear position/altitude/speed, shortest-way heading; labels and state from the earlier frame
+  if (!b || f <= 0) return a;
+  const out = a.slice();
+  for (const i of [1, 2]) out[i] = a[i] + (b[i] - a[i]) * f;
+  for (const i of [3, 4]) out[i] = Math.round(a[i] + (b[i] - a[i]) * f);
+  const dh = ((b[9] - a[9] + 540) % 360) - 180;
+  out[9] = (a[9] + dh * f + 360) % 360;
+  return out;
+}
+function tick(ts) {
+  if (playing) {
+    acc += (ts - last) / 1000 * Number($('speed').value) / 2;
+    while (acc >= 1 && idx < frames.length - 1) { idx++; acc--; }
+    frac = idx < frames.length - 1 ? acc : 0;
+    if (idx >= frames.length - 1) { playing = false; $('play').textContent = 'Play'; }
+    draw();
+  }
+  last = ts; requestAnimationFrame(tick);
+}
+$('play').onclick = () => { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; };
+$('scrub').oninput = () => { idx = Number($('scrub').value); acc = frac = 0; draw(); };
+document.querySelectorAll('#filters input, #layers input').forEach(el => el.onchange = draw);
+c.addEventListener('wheel', e => { e.preventDefault(); view.half *= e.deltaY > 0 ? 1.12 : 0.89; view.half = Math.max(0.15, Math.min(90, view.half)); draw(); }, { passive:false });
+// pointer input: mouse, pen and touch. One finger/mouse drags the scope, two fingers pinch-zoom,
+// a tap/click (little movement) selects the nearest aircraft.
+const pts = new Map();
+let down = null, pinch = null;
+const spread = () => { const [a, b] = [...pts.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]) || 1; };
+c.addEventListener('pointerdown', e => {
+  c.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pts.size === 1) down = [e.clientX, e.clientY]; else { down = null; pinch = { d: spread(), half: view.half }; }
+});
+c.addEventListener('pointermove', e => {
+  const prev = pts.get(e.pointerId); if (!prev) return;
+  pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 8) down = null;
+  if (pts.size === 1) {
+    const [, , k] = P(0, 0);
+    view.cx -= (e.clientX - prev[0]) * devicePixelRatio / k; view.cy += (e.clientY - prev[1]) * devicePixelRatio / k; draw();
+  } else if (pts.size === 2 && pinch) {
+    view.half = Math.max(0.3, Math.min(80, pinch.half * pinch.d / spread())); draw();
+  }
+});
+function pick(clientX, clientY, touch) {
+  const r = c.getBoundingClientRect(), mx = (clientX - r.left) * devicePixelRatio, my = (clientY - r.top) * devicePixelRatio;
+  let best = null, bd = (touch ? 28 : 16) * devicePixelRatio;
+  for (const [cs, px, py] of drawn) { const d = Math.hypot(px - mx, py - my); if (d < bd) { bd = d; best = cs; } }
+  sel = best; draw();
+  if (sel) { const rows = tr.filter(l => l.cs === sel && !l.el.classList.contains('future')); if (rows.length) rows[rows.length - 1].el.scrollIntoView({ block:'nearest' }); }
+}
+function lift(e) {
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if (pts.size < 2) pinch = null;
+  if (pts.size === 0) { if (down && e.type === 'pointerup') pick(e.clientX, e.clientY, e.pointerType === 'touch'); down = null; }
+}
+c.addEventListener('pointerup', lift);
+c.addEventListener('pointercancel', lift);
+window.addEventListener('keydown', e => { if (e.key === 'Escape') { sel = null; draw(); } });
+window.addEventListener('resize', resize);
+resize(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>

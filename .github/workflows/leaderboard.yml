@@ -1,0 +1,34 @@
+# After a merge to main: score the merged controller and update the leaderboard.
+# Only reviewed, merged code runs here.
+name: leaderboard
+on:
+  push:
+    branches: [main]
+    paths: [controller.py]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: leaderboard
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Score and record
+        env:
+          AUTHOR: ${{ github.event.head_commit.author.username || github.actor }}
+          NOTE: ${{ github.event.head_commit.message }}
+        run: |
+          python tools/ci_score.py --update-leaderboard --commit "${GITHUB_SHA::7}" \
+            --author "$AUTHOR" --note "$(printf '%s' "$NOTE" | head -1 | cut -c1-200)" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Commit the leaderboard
+        run: |
+          git config user.name "atc-leaderboard[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add leaderboard/
+          git diff --cached --quiet || git commit -m "leaderboard: ${GITHUB_SHA::7} [skip ci]"
+          git push

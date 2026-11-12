@@ -1,0 +1,575 @@
+{
+ "ident": "KSFO",
+ "iata": "SFO",
+ "name": "SAN FRANCISCO INTL",
+ "lat": 37.618805555555554,
+ "lon": -122.37541666666667,
+ "magvar": 14.0,
+ "elevation_ft": 13,
+ "longest_runway_ft": 11800,
+ "speed_limit_kt": null,
+ "speed_limit_alt_ft": null,
+ "transition_altitude_ft": 18000,
+ "transition_level_ft": 18000,
+ "datum": "NAR",
+ "x": 0.0,
+ "y": 0.0,
+ "source": {
+  "name": "FAA CIFP",
+  "file_created": "07-OCT-2026",
+  "cycle": "2611",
+  "effective": "29 OCT 2026"
+ },
+ "runways": [
+  {
+   "ident": "01L",
+   "length_ft": 7650,
+   "magnetic_bearing": 14.0,
+   "threshold_lat": 37.60945277777778,
+   "threshold_lon": -122.38189722222222,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -29.4,
+   "threshold_elevation_ft": 10,
+   "displaced_threshold_ft": 640,
+   "tch_ft": 50,
+   "width_ft": 200,
+   "tch_source": "D",
+   "localizer": null,
+   "ils_category": null,
+   "threshold_x": -0.309,
+   "threshold_y": -0.5605,
+   "opposite": "19R",
+   "true_bearing": 27.8,
+   "threshold_to_threshold_ft": 7010,
+   "implied_magvar": 13.8,
+   "runway_end_lat": 37.607898078732454,
+   "runway_end_lon": -122.38292764575584,
+   "runway_end_x": -0.3581,
+   "runway_end_y": -0.6537
+  },
+  {
+   "ident": "01R",
+   "length_ft": 8650,
+   "magnetic_bearing": 14.0,
+   "threshold_lat": 37.60769166666667,
+   "threshold_lon": -122.38013888888888,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -29.2,
+   "threshold_elevation_ft": 11,
+   "displaced_threshold_ft": 560,
+   "tch_ft": 50,
+   "width_ft": 200,
+   "tch_source": "D",
+   "localizer": null,
+   "ils_category": null,
+   "threshold_x": -0.2251,
+   "threshold_y": -0.666,
+   "opposite": "19L",
+   "true_bearing": 27.8,
+   "threshold_to_threshold_ft": 8089,
+   "implied_magvar": 13.8,
+   "runway_end_lat": 37.6063313101973,
+   "runway_end_lon": -122.38104050269732,
+   "runway_end_x": -0.2681,
+   "runway_end_y": -0.7476
+  },
+  {
+   "ident": "10L",
+   "length_ft": 11870,
+   "magnetic_bearing": 104.0,
+   "threshold_lat": 37.62873888888889,
+   "threshold_lon": -122.39339166666667,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -30.9,
+   "threshold_elevation_ft": 6,
+   "displaced_threshold_ft": 0,
+   "tch_ft": 55,
+   "width_ft": 200,
+   "tch_source": "R",
+   "localizer": null,
+   "ils_category": null,
+   "threshold_x": -0.8568,
+   "threshold_y": 0.5954,
+   "opposite": "28R",
+   "true_bearing": 117.79,
+   "threshold_to_threshold_ft": 11570,
+   "implied_magvar": 13.79,
+   "runway_end_lat": 37.62873888888889,
+   "runway_end_lon": -122.39339166666667,
+   "runway_end_x": -0.8568,
+   "runway_end_y": 0.5954
+  },
+  {
+   "ident": "10R",
+   "length_ft": 11381,
+   "magnetic_bearing": 104.0,
+   "threshold_lat": 37.62629166666667,
+   "threshold_lon": -122.39310555555556,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -30.5,
+   "threshold_elevation_ft": 7,
+   "displaced_threshold_ft": 0,
+   "tch_ft": 60,
+   "width_ft": 200,
+   "tch_source": "R",
+   "localizer": null,
+   "ils_category": null,
+   "threshold_x": -0.8431,
+   "threshold_y": 0.4487,
+   "opposite": "28L",
+   "true_bearing": 117.79,
+   "threshold_to_threshold_ft": 11081,
+   "implied_magvar": 13.79,
+   "runway_end_lat": 37.62629166666666,
+   "runway_end_lon": -122.39310555555556,
+   "runway_end_x": -0.8431,
+   "runway_end_y": 0.4487
+  },
+  {
+   "ident": "19L",
+   "length_ft": 8650,
+   "magnetic_bearing": 194.0,
+   "threshold_lat": 37.627341666666666,
+   "threshold_lon": -122.3671111111111,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -29.4,
+   "threshold_elevation_ft": 11,
+   "displaced_threshold_ft": 0,
+   "tch_ft": 55,
+   "width_ft": 200,
+   "tch_source": "I",
+   "localizer": "ISIA",
+   "ils_category": "1",
+   "threshold_x": 0.3959,
+   "threshold_y": 0.5116,
+   "opposite": "01R",
+   "true_bearing": 207.81,
+   "threshold_to_threshold_ft": 8089,
+   "implied_magvar": 13.81,
+   "runway_end_lat": 37.627341666666666,
+   "runway_end_lon": -122.3671111111111,
+   "runway_end_x": 0.3959,
+   "runway_end_y": 0.5116
+  },
+  {
+   "ident": "19R",
+   "length_ft": 7650,
+   "magnetic_bearing": 194.0,
+   "threshold_lat": 37.62648055555555,
+   "threshold_lon": -122.37060833333332,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -29.8,
+   "threshold_elevation_ft": 9,
+   "displaced_threshold_ft": 0,
+   "tch_ft": 58,
+   "width_ft": 200,
+   "tch_source": "V",
+   "localizer": null,
+   "ils_category": null,
+   "threshold_x": 0.2292,
+   "threshold_y": 0.46,
+   "opposite": "01L",
+   "true_bearing": 207.81,
+   "threshold_to_threshold_ft": 7010,
+   "implied_magvar": 13.81,
+   "runway_end_lat": 37.62648055555555,
+   "runway_end_lon": -122.37060833333332,
+   "runway_end_x": 0.2292,
+   "runway_end_y": 0.46
+  },
+  {
+   "ident": "28L",
+   "length_ft": 11381,
+   "magnetic_bearing": 284.0,
+   "threshold_lat": 37.612097222222225,
+   "threshold_lon": -122.35926388888889,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -28.8,
+   "threshold_elevation_ft": 13,
+   "displaced_threshold_ft": 300,
+   "tch_ft": 53,
+   "width_ft": 200,
+   "tch_source": "I",
+   "localizer": "ISFO",
+   "ils_category": "2",
+   "threshold_x": 0.7701,
+   "threshold_y": -0.402,
+   "opposite": "10R",
+   "true_bearing": 297.81,
+   "threshold_to_threshold_ft": 11081,
+   "implied_magvar": 13.81,
+   "runway_end_lat": 37.611712810758505,
+   "runway_end_lon": -122.35834789644608,
+   "runway_end_x": 0.8137,
+   "runway_end_y": -0.425
+  },
+  {
+   "ident": "28R",
+   "length_ft": 11870,
+   "magnetic_bearing": 284.0,
+   "threshold_lat": 37.61391944444445,
+   "threshold_lon": -122.35805833333333,
+   "gradient_pct": null,
+   "ellipsoid_height_m": -28.7,
+   "threshold_elevation_ft": 13,
+   "displaced_threshold_ft": 300,
+   "tch_ft": 55,
+   "width_ft": 200,
+   "tch_source": "I",
+   "localizer": "IGWQ",
+   "ils_category": "3",
+   "threshold_x": 0.8275,
+   "threshold_y": -0.2927,
+   "opposite": "10L",
+   "true_bearing": 297.81,
+   "threshold_to_threshold_ft": 11570,
+   "implied_magvar": 13.81,
+   "runway_end_lat": 37.613535031989144,
+   "runway_end_lon": -122.3571423192762,
+   "runway_end_x": 0.8712,
+   "runway_end_y": -0.3158
+  }
+ ],
+ "localizers": [
+  {
+   "ident": "IGWQ",
+   "ils_category": "3",
+   "freq_mhz": 111.7,
+   "runway": "28R",
+   "loc_lat": 37.62954444444445,
+   "loc_lon": -122.39531111111111,
+   "loc_magnetic_bearing": 283.8,
+   "gs_lat": 37.61427777777778,
+   "gs_lon": -122.36197777777777,
+   "loc_distance_from_rwy_end_ft": 628,
+   "gs_distance_from_threshold_ft": 1065,
+   "loc_width_deg": 3.29,
+   "gs_angle_deg": 3.0,
+   "station_declination": 14.0,
+   "gs_tch_ft": 55,
+   "gs_elevation_ft": 8,
+   "loc_x": -0.9482,
+   "loc_y": 0.6437,
+   "gs_x": 0.6407,
+   "gs_y": -0.2713,
+   "true_course": 297.81
+  },
+  {
+   "ident": "ISFO",
+   "ils_category": "2",
+   "freq_mhz": 109.55,
+   "runway": "28L",
+   "loc_lat": 37.627075,
+   "loc_lon": -122.39497777777778,
+   "loc_magnetic_bearing": 283.8,
+   "gs_lat": 37.614244444444445,
+   "gs_lon": -122.362,
+   "loc_distance_from_rwy_end_ft": 313,
+   "gs_distance_from_threshold_ft": 1066,
+   "loc_width_deg": 3.43,
+   "gs_angle_deg": 2.85,
+   "station_declination": 14.0,
+   "gs_tch_ft": 53,
+   "gs_elevation_ft": 8,
+   "loc_x": -0.9324,
+   "loc_y": 0.4957,
+   "gs_x": 0.6396,
+   "gs_y": -0.2733,
+   "true_course": 297.81
+  },
+  {
+   "ident": "ISIA",
+   "ils_category": "1",
+   "freq_mhz": 108.9,
+   "runway": "19L",
+   "loc_lat": 37.60452222222222,
+   "loc_lon": -122.38223888888888,
+   "loc_magnetic_bearing": 193.8,
+   "gs_lat": 37.62520555555555,
+   "gs_lon": -122.36973888888888,
+   "loc_distance_from_rwy_end_ft": 744,
+   "gs_distance_from_threshold_ft": 1043,
+   "loc_width_deg": 4.27,
+   "gs_angle_deg": 3.0,
+   "station_declination": 14.0,
+   "gs_tch_ft": 55,
+   "gs_elevation_ft": 6,
+   "loc_x": -0.3253,
+   "loc_y": -0.856,
+   "gs_x": 0.2706,
+   "gs_y": 0.3836,
+   "true_course": 207.81
+  }
+ ],
+ "fas_path_points": [
+  {
+   "approach": "R10L",
+   "runway": "10L",
+   "ref_path_id": "W10A",
+   "ltp_lat": 37.62841958333333,
+   "ltp_lon": -122.39361694444445,
+   "ltp_ellipsoid_height_m": -30.9,
+   "glide_path_angle_deg": 3.0,
+   "fpap_lat": 37.61573055555556,
+   "fpap_lon": -122.3668586111111,
+   "course_width_m": 106.75,
+   "tch": 55.0,
+   "tch_units": "F",
+   "ltp_x": -0.8675,
+   "ltp_y": 0.5762
+  },
+  {
+   "approach": "R19L",
+   "runway": "19L",
+   "ref_path_id": "W19A",
+   "ltp_lat": 37.62734208333333,
+   "ltp_lon": -122.36711083333333,
+   "ltp_ellipsoid_height_m": -29.4,
+   "glide_path_angle_deg": 3.0,
+   "fpap_lat": 37.60542388888889,
+   "fpap_lon": -122.38164111111111,
+   "course_width_m": 106.75,
+   "tch": 55.0,
+   "tch_units": "F",
+   "ltp_x": 0.3959,
+   "ltp_y": 0.5116
+  },
+  {
+   "approach": "R19RY",
+   "runway": "19R",
+   "ref_path_id": "W19B",
+   "ltp_lat": 37.62648125,
+   "ltp_lon": -122.37060930555555,
+   "ltp_ellipsoid_height_m": -29.8,
+   "glide_path_angle_deg": 3.15,
+   "fpap_lat": 37.60456277777778,
+   "fpap_lon": -122.38513861111112,
+   "course_width_m": 106.75,
+   "tch": 55.0,
+   "tch_units": "F",
+   "ltp_x": 0.2291,
+   "ltp_y": 0.46
+  },
+  {
+   "approach": "R19RZ",
+   "runway": "19R",
+   "ref_path_id": "W19D",
+   "ltp_lat": 37.62648125,
+   "ltp_lon": -122.37060930555555,
+   "ltp_ellipsoid_height_m": -29.8,
+   "glide_path_angle_deg": 3.15,
+   "fpap_lat": 37.60456277777778,
+   "fpap_lon": -122.38513861111112,
+   "course_width_m": 106.75,
+   "tch": 55.0,
+   "tch_units": "F",
+   "ltp_x": 0.2291,
+   "ltp_y": 0.46
+  },
+  {
+   "approach": "R28L",
+   "runway": "28L",
+   "ref_path_id": "W28B",
+   "ltp_lat": 37.612096388888894,
+   "ltp_lon": -122.35926472222222,
+   "ltp_ellipsoid_height_m": -28.8,
+   "glide_path_angle_deg": 2.85,
+   "fpap_lat": 37.626291111111115,
+   "fpap_lon": -122.39310541666667,
+   "course_width_m": 106.75,
+   "tch": 52.6,
+   "tch_units": "F",
+   "ltp_x": 0.77,
+   "ltp_y": -0.402
+  },
+  {
+   "approach": "R28RZ",
+   "runway": "28R",
+   "ref_path_id": "W28A",
+   "ltp_lat": 37.61391805555556,
+   "ltp_lon": -122.35805763888888,
+   "ltp_ellipsoid_height_m": -28.7,
+   "glide_path_angle_deg": 3.0,
+   "fpap_lat": 37.62873861111111,
+   "fpap_lon": -122.39339180555557,
+   "course_width_m": 106.75,
+   "tch": 54.8,
+   "tch_units": "F",
+   "ltp_x": 0.8276,
+   "ltp_y": -0.2928
+  }
+ ],
+ "msa": [
+  {
+   "center": "KSFO",
+   "center_section": "PA",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5100,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW10R",
+   "center_section": "PG",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5100,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW19L",
+   "center_section": "PG",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5000,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW19R",
+   "center_section": "PG",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5000,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW28L",
+   "center_section": "PG",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5000,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW28R",
+   "center_section": "PG",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5000,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "RW28R",
+   "center_section": "PG",
+   "multiple_code": "A",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5100,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "SFO",
+   "center_section": "D ",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 120,
+     "to_deg": 230,
+     "altitude_ft": 5000,
+     "radius_nm": 25
+    },
+    {
+     "from_deg": 230,
+     "to_deg": 360,
+     "altitude_ft": 4500,
+     "radius_nm": 25
+    },
+    {
+     "from_deg": 360,
+     "to_deg": 120,
+     "altitude_ft": 3500,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "SFO",
+   "center_section": "D ",
+   "multiple_code": "A",
+   "sectors": [
+    {
+     "from_deg": 120,
+     "to_deg": 230,
+     "altitude_ft": 5100,
+     "radius_nm": 25
+    },
+    {
+     "from_deg": 230,
+     "to_deg": 360,
+     "altitude_ft": 4500,
+     "radius_nm": 25
+    },
+    {
+     "from_deg": 360,
+     "to_deg": 120,
+     "altitude_ft": 3500,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  },
+  {
+   "center": "TUZCU",
+   "center_section": "PC",
+   "multiple_code": "",
+   "sectors": [
+    {
+     "from_deg": 180,
+     "to_deg": 180,
+     "altitude_ft": 5100,
+     "radius_nm": 25
+    }
+   ],
+   "bearing_reference": "magnetic"
+  }
+ ],
+ "projection": {
+  "type": "azimuthal equidistant on WGS-84 (Vincenty), centred on the ARP",
+  "origin_lat": 37.618805555555554,
+  "origin_lon": -122.37541666666667,
+  "units": "nautical miles",
+  "axes": "x east, y true north at the ARP"
+ }
+}

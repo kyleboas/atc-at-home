@@ -1,0 +1,52 @@
+# Posts the score on the pull request. Runs in the base repo with write access but never
+# executes submitted code: it only reads numbers from the evaluate job's artifact.
+name: comment
+on:
+  workflow_run:
+    workflows: [evaluate]
+    types: [completed]
+permissions:
+  pull-requests: write
+  actions: read
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: atc-result
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = parseInt(fs.readFileSync('pr_number.txt', 'utf8').trim(), 10);
+            if (!Number.isInteger(pr) || pr <= 0) return;
+            let r = null;
+            try { r = JSON.parse(fs.readFileSync('result.json', 'utf8')); } catch (e) {}
+            const n = v => (typeof v === 'number' && isFinite(v)) ? String(v) : '–';
+            const REASONS = {
+              hard: 'more hard violations (separation, collision alarms, near misses, terrain) than the current best',
+              manual: 'more manual intercept / handoff / taxi violations (6.11, 6.14, 2.2) than the current best',
+              cost: 'cost is not lower than the current best',
+            };
+            let body;
+            if (!r) {
+              body = '### ATC autoresearch\n\nNo score: the check failed before scoring (only `controller.py` may change, ' +
+                     'and the controller must run without errors). See the **evaluate** run for details.';
+            } else {
+              const b = r.best || {};
+              const row = (k, a, c) => `| ${k} | ${n(a)} | ${n(c)} |`;
+              body = ['### ATC autoresearch: training score', '',
+                '| | this submission | current best |', '|---|---|---|',
+                row('cost', r.cost, b.cost), row('hard violations', r.hard, b.hard),
+                row('manual 6.11/6.14/2.2', r.manual, b.manual), row('rule violations', r.rule, b.rule),
+                row('go-arounds', r.go_arounds, b.go_arounds), '',
+                r.beats_best ? '✅ **Beats the current best.** A maintainer will check it on the private held-out scenarios before merging.'
+                             : '❌ **Does not beat the current best:** ' +
+                               (Array.isArray(r.fail_reasons) ? r.fail_reasons.filter(x => REASONS[x]).map(x => REASONS[x]).join('; ') : '')
+              ].join('\n');
+            }
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr, body });

@@ -1,0 +1,40 @@
+# Scores every pull request on the training scenarios. Runs the submitted code with a
+# read-only token and no secrets (pull_request, not pull_request_target), so fork code
+# cannot write to the repo or read anything private.
+name: evaluate
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Submissions may only change controller.py
+        run: |
+          changed=$(git diff --name-only "origin/${GITHUB_BASE_REF}"...HEAD)
+          echo "$changed"
+          bad=$(printf '%s\n' "$changed" | grep -v '^controller.py$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::A submission may only change controller.py. Also changed:"; echo "$bad"; exit 1
+          fi
+      - name: Score on the training scenarios
+        run: python tools/ci_score.py --out result.json --summary "$GITHUB_STEP_SUMMARY"
+      - name: Record the pull request number for the comment job
+        if: always()
+        run: echo "${{ github.event.pull_request.number }}" > pr_number.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atc-result
+          path: |
+            result.json
+            pr_number.txt
