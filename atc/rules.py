@@ -133,8 +133,6 @@ class Monitor:
                 self.add("rule", "3.2.11", ac, "frequency change during a critical phase (before 1/2 nm off the departure end)")
         if n == "exit_runway" and ac.gs > 70:
             self.add("rule", "3.5.1", ac, f"exit runway issued at {ac.gs:.0f} kts (below ~70)")
-        if n == "go_around" and ac.ifr and cmd["then"] != "runway_heading":
-            self.add("rule", "3.5.4", ac, "IFR go-around returning to radar should fly runway heading")
         # ---- radar ----
         if n == "vector" and cmd["altitude"] is not None:
             for (x, y) in self.projected(ac, cmd):

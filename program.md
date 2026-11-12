@@ -40,6 +40,11 @@ Flight documentation is linked in README.md.
   fix, direct-to, go-around "fly runway heading"). Nothing else exists: no callsign in a give way,
   no hold short of a taxiway, no turn direction on a vector, sequencing says where the traffic to
   follow is (`follow="final"`), not who it is.
+- Go around (3.5.4): `C.go_around(cs)` (fly runway heading) or
+  `C.go_around(cs, then="left_traffic"|"right_traffic", runway="28L")`: a 1,500 ft circuit
+  (observation `circuit`, legs `upwind`/`crosswind`/`downwind`/`base`). Approach is always open, so
+  either way Tower hands the aircraft to Approach within 150 s; sequencing can then say
+  `follow="left_downwind"` etc.
 - Give way (2.2.1): Ground resolves taxi conflicts with `C.give_way(cs, to="left|right|ahead")` or
   `C.give_way(cs, to="exiting", runway="28L")`. The pilot picks the traffic on that side when the
   call is heard, stops short of its path and continues on their own once it has passed. When a new

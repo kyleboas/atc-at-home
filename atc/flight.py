@@ -136,6 +136,7 @@ class Aircraft:
         self.touchdown_u = None
         self.clearance = None             # landing clearance runway
         self.leader = None
+        self.circuit = None               # "left" | "right": flying a visual circuit after a go-around
         self.sequence = None
         self.exit_cmd = None
         self.expedite_exit = False
