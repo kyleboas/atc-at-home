@@ -13,7 +13,8 @@ Departures push from the real OSM stands (terminal stands south of 28L; cargo st
 enroute transition, and cruise at FL330-FL390.
 
 Levels (movements per hour): light ~20 arr + ~18 dep, medium ~30 + ~26, peak ~42 + ~36.
-Splits: train 0-11 (40 min sessions, so a full train evaluation stays under ~2 minutes),
+Splits: train 0-11 (40 min sessions) plus 12, a 3-hour peak session so taxiway gridlock and
+long holding show up in the score,
 holdout 1000-1011 (60 min; 1010 and 1011 are 3-hour peak sessions with 200+ aircraft),
 smoke 900, 901 (20 min).
 """
@@ -22,11 +23,11 @@ import random
 from . import world as W
 
 SPLITS = {
-    "train": list(range(0, 12)),
+    "train": list(range(0, 13)),
     "holdout": list(range(1000, 1012)),   # humans only
     "smoke": [900, 901],
 }
-LONG = {1010, 1011}                        # 3-hour peak sessions (200+ aircraft)
+LONG = {12, 1010, 1011}                    # 3-hour peak sessions (200+ aircraft)
 LEVELS = {  # (arrivals/h, departures/h)
     "light": ((18, 22), (16, 20)),
     "medium": ((28, 32), (24, 28)),

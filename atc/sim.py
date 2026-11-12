@@ -48,6 +48,9 @@ TAXI_SPEED = 20.0
 PUSH_SPEED = 4.0
 RWY_EXIT_LEAD = 0.01
 FT = W.FT_NM
+INF = float("inf")
+AAR = 36                  # KSFO arrival acceptance rate per hour used by the ground delay program
+GDP_EXEMPT_S = 300        # arrivals in the first 5 minutes are already airborne nearby: no EDCT
 
 
 class Sim:
@@ -61,7 +64,7 @@ class Sim:
         self.t_end = self.duration + 45 * 60
         self.atis = "Alpha"
         self.aircraft = {}
-        self.spawns = sorted(scenario["traffic"], key=lambda s: (s["t"], s["cs"]))
+        self.spawns = sorted(self.meter_arrivals(scenario["traffic"]), key=lambda s: (s["t"], s["cs"]))
         self.pending = []
         self.requests = []
         self.req_id = 0
@@ -73,6 +76,32 @@ class Sim:
         self.controller_errors = 0
         self.monitor = Monitor(self)
         self.reserved = {s.get("stand") for s in self.spawns if s.get("stand")}
+
+    # ------------------------------------------------------------------ traffic management
+    def meter_arrivals(self, traffic):
+        """Ground delay program (FAA TFMS): when arrival demand is above the airport acceptance rate,
+        flights still at their origin get an EDCT so they reach the runway in a free slot instead of
+        holding. Slots are given in order of runway ETA (unimpeded); flights in the first five
+        minutes are already airborne close in and are exempt, but use their slots. The ground delay is
+        not the controller's and is not scored (reported as gdp_delay_min)."""
+        out, eta = [], []
+        for s in traffic:
+            s = dict(s)
+            out.append(s)
+            if s["intent"] == "arrival":
+                probe = Aircraft(s, self.seed)              # own RNG: nothing shared is consumed
+                self.spawn_arrival(probe, s)
+                eta.append((s["t"] + probe.m["nominal"], s))
+        gap = 3600.0 / AAR
+        last = -INF
+        for e, s in sorted(eta, key=lambda p: (p[0], p[1]["cs"])):
+            slot = max(e, last + gap)
+            last = slot
+            s["edct_s"] = 0
+            if s["t"] >= GDP_EXEMPT_S and slot - e > 60:
+                s["edct_s"] = int(slot - e)
+                s["t"] += s["edct_s"]
+        return out
 
     # ------------------------------------------------------------------ taxi routes
     def plan_route(self, start, goal, via=None):
