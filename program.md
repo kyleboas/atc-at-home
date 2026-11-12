@@ -84,7 +84,7 @@ Approach / Ground changes that absorb the earlier departures.
    `python3 tools/experiment.py start "<short description, cite the manual section>"`
 3. Edit `controller.py`. Sanity check with `python3 evaluate.py --split smoke`.
 4. Score and record it: `python3 tools/experiment.py finish`
-   This runs the training scenarios (~3.5 min; seed 12 is a 3-hour peak session), KEEPS the change (git commit) only if hard
+   This runs the training scenarios (~5.5 min; seed 12 is a 3-hour peak session), KEEPS the change (git commit) only if hard
    violations did not increase, intercept/handoff/taxi rule violations (6.11, 6.14, 2.2) did
    not increase, and cost went down; otherwise it reverts `controller.py`. Never commit or
    revert yourself.

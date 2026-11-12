@@ -4,7 +4,9 @@
     python3 evaluate.py --split smoke   # 2 quick scenarios (20 min)
     python3 evaluate.py --split holdout # humans only, before merging a change
 
-Lower cost is better. Any hard violation (loss of runway separation per manual 3.1.1 incl.
+Lower cost is better. Cost is the average over scenarios of each scenario's cost per 40 minutes, so
+the 3-hour session (seed 12) counts like one train scenario at its rate, not 4.5 of them.
+Any hard violation (loss of runway separation per manual 3.1.1 incl.
 intersecting runways, a crossing against traffic per 2.3.2, a collision alarm per 6.2.4, an
 airborne near miss, or terrain per 6.2.1) marks the run FAIL regardless of cost.
 """
@@ -28,6 +30,7 @@ FROZEN = ["atc/__init__.py", "atc/world.py", "atc/procs.py", "atc/flight.py", "a
           "ksfo/data/airport.json", "ksfo/data/procedures.json", "ksfo/data/fixes.json", "ksfo/data/holds.json",
           "ksfo/data/surface.json", "ksfo/data/mva.json"]
 WEIGHTS = {"hard": 100, "rule": 10, "service": 2, "go_around": 3}
+SESSION_S = 40 * 60     # cost is reported per 40-minute session (the length of a train scenario)
 
 
 def check_frozen():
@@ -76,7 +79,7 @@ def metrics(sim):
     delay_min = (dep_delay + push_hold / 4 + arr_delay + mon.req_wait_s + level_s / 2 + cross_wait / 2) / 60
     cost = (WEIGHTS["hard"] * sev["hard"] + WEIGHTS["rule"] * sev["rule"] + WEIGHTS["service"] * sev["service"]
             + WEIGHTS["go_around"] * go_arounds + delay_min)
-    return {"seed": sim.seed, "level": sim.sc["level"], "cost": round(cost, 2), "hard": sev["hard"],
+    return {"seed": sim.seed, "level": sim.sc["level"], "duration": sim.duration, "cost": round(cost, 2), "hard": sev["hard"],
             "rule": sev["rule"], "service": sev["service"], "by_rule": by_rule, "by_pos": by_pos,
             "dep_level_min": round(level_s / 60, 2), "go_arounds": go_arounds,
             "delay_min": round(delay_min, 2), "dep_delay_min": round(dep_delay / 60, 2),
@@ -119,7 +122,9 @@ def main():
         for k, v in r["by_pos"].items():
             by_pos[k] = by_pos.get(k, 0) + v
     summary = {
-        "split": args.split, "scenarios": n, "cost": round(tot("cost") / n, 3),
+        # each session is scored per 40 minutes, so a 3-hour session weighs like a 40-minute one
+        "split": args.split, "scenarios": n,
+        "cost": round(sum(r["cost"] * SESSION_S / r["duration"] for r in results) / n, 3),
         "status": "PASS" if tot("hard") == 0 else "FAIL",
         "hard": tot("hard"), "rule": tot("rule"), "service": tot("service"), "go_arounds": tot("go_arounds"),
         "delay_min_per_scenario": round(tot("delay_min") / n, 2),
