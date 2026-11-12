@@ -31,8 +31,6 @@
   .row.invalid { color:var(--bad); } .row.future { opacity:.22; }
   .row.sel { background:#1f6feb26; box-shadow: inset 3px 0 0 #58a6ff; }
   .row.talk { background:#d2992226; }
-  #now { padding:6px 10px; border-bottom:1px solid var(--line); min-height:34px; font-size:12px; }
-  #now .lbl { color:var(--muted); }
   #selcard { padding:6px 10px; border-bottom:1px solid var(--line); font-size:12px; display:none; background:#0f1a2b; }
   #selcard b { color:#58a6ff; }
   canvas { cursor:crosshair; touch-action:none; }
@@ -44,7 +42,7 @@
     .bar { padding: 5px 8px; gap: 6px; }
     button, select { padding: 6px 10px; }
     #log { font-size: 11px; }
-    #now, #selcard { font-size: 11px; }
+    #selcard { font-size: 11px; }
   }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
   #layers label { color:var(--muted); }
@@ -88,7 +86,6 @@
     <label><input type="checkbox" id="fFollow" checked> follow</label>
     <label><input type="checkbox" id="fSel"> selected only</label>
   </div>
-  <div id="now"><span class="lbl">now speaking ·</span> <span id="nowtxt" class="muted">—</span></div>
   <div id="selcard"></div>
   <div id="log"></div>
 </div>
@@ -209,12 +206,10 @@ function draw() {
   const later = nxt ? new Map(nxt[1].map(a => [a[0], a])) : null;
   const acs = acs0.map(a => interp(a, later && later.get(a[0]), frac));
   const talking = {};                        // cs -> colour of whoever is transmitting to/from it
-  let nowLine = null;
   for (const l of tr) {
     if (l.t > t) break;
     if (l.t > t - TALK_S && l.cs && !['hard','rule','service','invalid','error','atis'].includes(l.kind)) {
       talking[l.cs] = l.who === l.cs ? '#e6edf3' : (POSCOL[l.who] || '#e6edf3');
-      nowLine = l;
     }
   }
   lastTalk = talking;
@@ -257,8 +252,7 @@ function draw() {
       ctx.fillText(`${hdgA >= 0 ? 'H' + String(hdgA).padStart(3, '0') + ' ' : ''}${altA >= 0 ? arrow + String(Math.round(altA/100)).padStart(3,'0') : ''}`, px + 8*dpr, py + 20*dpr);
     }
   }
-  // "now speaking" bar and the selected aircraft's card
-  $('nowtxt').innerHTML = nowLine ? `<span style="color:${l2col(nowLine)}">${esc(nowLine.who)}</span> ${esc(nowLine.text)}` : '—';
+  // the selected aircraft's card
   const sa = sel && acs.find(a => a[0] === sel);
   $('selcard').style.display = sel ? 'block' : 'none';
   if (sel) {

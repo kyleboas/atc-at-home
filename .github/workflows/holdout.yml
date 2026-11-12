@@ -1,0 +1,130 @@
+# Held-out check for pull requests that beat the training best.
+#
+# Runs after evaluate. Only main's tools run with any privilege; the pull request contributes
+# nothing but its controller.py, which runs with no network, as an unprivileged user, with no
+# token and no secrets in its environment. This week's seeds come from the ATC_CI_SALT secret.
+#
+# Auto-merge is off unless the repository variable ATC_AUTOMERGE is "true". It merges only when
+# the pull request is better on both the training and this week's held-out scenarios.
+name: holdout
+on:
+  workflow_run:
+    workflows: [evaluate]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: holdout-${{ github.event.workflow_run.head_sha }}
+jobs:
+  gate:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.find.outputs.pr }}
+      author: ${{ steps.find.outputs.author }}
+      title: ${{ steps.find.outputs.title }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: atc-result
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - id: find
+        uses: actions/github-script@v7
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            // result.json came from untrusted code: it only decides whether to spend the time.
+            const fs = require('fs');
+            let r = {};
+            try { r = JSON.parse(fs.readFileSync('result.json', 'utf8')); } catch (e) {}
+            if (r.beats_best !== true) { core.info('does not beat the training best: skipping'); return; }
+            const sha = process.env.SHA;
+            const prs = await github.paginate(github.rest.pulls.list, { owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
+            const pr = prs.find(p => p.head.sha === sha && p.base.ref === 'main');
+            if (!pr) { core.info('no open pull request at this commit'); return; }
+            const files = await github.paginate(github.rest.pulls.listFiles, { owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number });
+            if (files.length !== 1 || files[0].filename !== 'controller.py') { core.info('changes more than controller.py'); return; }
+            core.setOutput('pr', String(pr.number));
+            core.setOutput('author', pr.user.login);
+            core.setOutput('title', pr.title.replace(/[^\w .,:;()\/+#'-]/g, '').slice(0, 200));
+
+  score:
+    needs: gate
+    if: needs.gate.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Fetch the pull request's controller.py (as data, not run)
+        env:
+          PR: ${{ needs.gate.outputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch -q --no-tags "https://github.com/${GITHUB_REPOSITORY}" "+refs/pull/${PR}/head:refs/remotes/pr"
+          test "$(git rev-parse refs/remotes/pr)" = "$SHA"
+          git show "${SHA}:controller.py" > "$RUNNER_TEMP/pr_controller.py"
+      - name: This week's seeds
+        env:
+          ATC_CI_SALT: ${{ secrets.ATC_CI_SALT }}
+        run: python tools/ci_holdout.py seeds --out "$RUNNER_TEMP/seeds.json"
+      - name: Sandbox user
+        run: sudo useradd --system --no-create-home --shell /usr/sbin/nologin atcbox
+      - name: Score (pull request on training and held-out, main on held-out)
+        env:
+          ATC_SANDBOX: sudo -n unshare --net -- runuser -u atcbox --
+        run: |
+          python tools/ci_holdout.py judge --controller "$RUNNER_TEMP/pr_controller.py" \
+            --seeds "$RUNNER_TEMP/seeds.json" --out holdout.json --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atc-holdout
+          path: holdout.json
+
+  report:
+    needs: [gate, score]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: atc-holdout
+      - name: Comment, and merge if enabled and better on both
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ needs.gate.outputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          AUTHOR: ${{ needs.gate.outputs.author }}
+          TITLE: ${{ needs.gate.outputs.title }}
+          AUTOMERGE: ${{ vars.ATC_AUTOMERGE }}
+        run: |
+          python -c 'import json,sys; sys.path.insert(0,"tools"); from ci_holdout import summary; print(summary(json.load(open("holdout.json"))))' > body.md
+          ok=$(python -c 'import json; print("yes" if json.load(open("holdout.json")).get("ok") is True else "no")')
+          if [ "$ok" = yes ] && [ "$AUTOMERGE" = true ]; then
+            echo "" >> body.md; echo "Merging automatically (ATC_AUTOMERGE is on)." >> body.md
+          elif [ "$ok" = yes ]; then
+            echo "" >> body.md; echo "A maintainer will review the code and merge." >> body.md
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          if [ "$ok" = yes ] && [ "$AUTOMERGE" = true ]; then
+            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$SHA"
+            # merges made with GITHUB_TOKEN do not trigger push workflows, so start the leaderboard here
+            gh workflow run leaderboard.yml --repo "$GITHUB_REPOSITORY" --ref main -f author="$AUTHOR" -f note="$TITLE"
+          fi

@@ -28,7 +28,23 @@ frozen scoring becomes the new baseline for everyone. Think *ATC@home*.
   (6.11.7–6.11.8), intercepts (6.11.3–6.11.5), handoffs (6.14), runway crossings (2.3), taxiing
   (2.2), radar separation (6.2), terrain (6.2.1) — plus delays and go-arounds.
 
-## How to contribute an experiment
+## Join with one command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kyleboas/atc-autoresearch/main/tools/join.sh | bash
+```
+
+It forks and clones the repo, checks the simulator, starts you from the current best and, if
+[Claude Code](https://claude.com/claude-code) is installed, runs an agent for 10 experiments
+(`tools/join.sh 30` for more). Needs `git`, the [GitHub CLI](https://cli.github.com) (logged in)
+and Python 3.14. You pay for your own machine and AI usage.
+
+Everyone's experiments are coordinated through issues: each one is claimed before it starts and
+its numbers and diff are published when it ends, so nobody repeats a tried idea
+([`collab.md`](collab.md), [`tools/collab.py`](tools/collab.py)). See who is trying what with
+`python3 tools/collab.py status`, or on the [issues page](https://github.com/kyleboas/atc-autoresearch/issues).
+
+## How to contribute an experiment by hand
 
 ```bash
 git clone https://github.com/<you>/atc-autoresearch && cd atc-autoresearch   # your fork
@@ -60,8 +76,9 @@ A controller beats the current best only if **all** of these hold
 2. no more **manual intercept / handoff / taxi** violations (6.11, 6.14, 2.2) — never traded away;
 3. **lower cost** (hard × 100 + rule × 10 + service × 2 + go-arounds × 3 + delay minutes).
 
-The official score is the one the GitHub check posts on your pull request. Maintainers also run
-a private held-out set of scenarios before merging, so tuning to the public training seeds
+The official score is the one the GitHub check posts on your pull request. A pull request that
+beats the best is then scored on held-out scenarios that change every week and are never
+published, against `main` on the same scenarios, so tuning to the public training seeds
 won't help.
 
 ## Infinite Flight resources
