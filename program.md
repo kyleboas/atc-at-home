@@ -1,13 +1,46 @@
 # Autoresearch program: improve the KSFO AI air traffic controller
 
 You are improving `controller.py`: one AI controller running four positions (Ground, Tower,
-Approach, Departure) at San Francisco (KSFO) in the West Plan (arrivals 28L/28R, departures
-01L/01R, which cross the 28s), on real FAA procedures (CIFP cycle 2611: STARs, SIDs, ILS/RNAV
+Approach, Departure) at San Francisco (KSFO) in any of its real runway configurations, on real FAA procedures (CIFP cycle 2611: STARs, SIDs, ILS/RNAV
 approaches incl. RF legs, published holds), the real OSM taxiway network and the real NorCal
 minimum vectoring altitudes. It must follow FAA Order JO 7110.65
 (https://www.faa.gov/air_traffic/publications/atpubs/atc_html/; `python3 tools/fetch_faa.py` saves a
 local text copy in `reference/faa-7110.65.txt` for searching) and speak the FAA phraseology
 implemented in `atc/commands.py`, where each instruction cites its paragraph.
+
+## Runway configurations: be good in all of them
+
+Every session runs in one real KSFO configuration (shares from a year of ADS-B, `W.CONFIG_SOURCE`):
+
+| configuration | arrivals | departures | share of the year |
+|---|---|---|---|
+| `west_28s` | 28L, 28R | 28L, 28R | 52 % (Apr-Sep) |
+| `west` (West Plan) | 28L, 28R | 01L, 01R (heavies 28s) | 39 % |
+| `west_28r` | 28R | 01L, 01R (heavies 28s) | 4 % |
+| `west_28l` | 28L | 01L, 01R (heavies 28s) | 1 % |
+| `southeast` | 19L | 10L, 10R | 3 % |
+| `east` | 10L | 10R | 0.4 % |
+| `west_dep28l`, `west_28r_28s` | 28s / 28R | 28L / 28s | 3 % (holdout only) |
+
+The training split is every configuration above (except the holdout-only two) at every traffic
+level (light, medium, peak), plus a 3-hour West Plan peak (`scenarios.SCENARIOS`):
+`west` 0-2, `west_28s` 3-5, `west_28r` 6-8, `west_28l` 9-11, `southeast` 12-14, `east` 15-17,
+long peak 18.
+
+The score is the average over configurations of each configuration's average cost, so every
+configuration counts the same, and a change is kept only if no configuration gets more hard
+violations (`by_config` in the evaluator output shows each). Two configurations are never
+trained on and the holdout includes them, so:
+
+- Work from the runways in use (`W.ARR_RUNWAYS`, `W.DEP_RUNWAYS`, `W.DEP_HEAVY`,
+  `W.INTERSECTIONS`, `W.CSPR`, `W.EXITS`, `W.LINEUP`, the runway geometry, each aircraft's
+  `runway`, STAR and approach), as a real controller does from the ATIS. Never branch on the
+  configuration's name (`tools/ci_guard.py` rejects `W.CONFIG*` and `"config"`) or on a seed.
+- Prefer rules that follow from geometry (same runway, parallel, intersecting, crossing a
+  departure path) over per-runway tables; when a procedure needs a table (a STAR's downwind fix,
+  a hold), key it on the procedure, not the configuration.
+- Check a change across configurations: `python3 evaluate.py --per-scenario` prints each seed with
+  its configuration.
 
 Working with others? Also follow [`collab.md`](collab.md): it claims each idea and publishes each
 result as an issue so contributors don't repeat each other.
@@ -35,10 +68,12 @@ result as an issue so contributors don't repeat each other.
   degrees or less (20 degrees or less within 2 nm of the gate), at an altitude not above the
   glideslope. Clear for the approach with an altitude until established and transfer to tower
   before the gate (5-9-4, 5-9-5).
-- Parallel approaches (5-9-6): aircraft for 28L and 28R are 1000 ft apart until both are
+- Parallel approaches (5-9-6): aircraft for parallel runways (28L/28R) are 1000 ft apart until both are
   established on their localizers.
-- Runways (3-9-6, 3-9-8, 3-10-3, 3-10-4): same-runway and intersecting-runway separation (the
-  01s cross the 28s, including extended centerlines), wake spacing on final (5-5-4) and for
+- Runways (3-9-6, 3-9-8, 3-10-3, 3-10-4): same-runway and intersecting-runway separation (in the
+  West Plan the 01s cross the 28s, in the Southeast Plan the 10s cross 19L, including extended
+  centerlines); arrivals and departures on the same runway (the 28s plan) need 3-9-6/3-10-3
+  spacing between them, wake spacing on final (5-5-4) and for
   departures. Every landing aircraft needs a landing clearance (3-10-5).
 - Runway crossings (3-1-3, 3-7-2): explicit crossing or hold-short instructions; never cross in
   front of a departure or arrival.
@@ -90,7 +125,7 @@ Approach / Ground changes that absorb the earlier departures.
    `python3 tools/experiment.py start "<short description, cite the 7110.65 paragraph>"`
 3. Edit `controller.py`. Sanity check with `python3 evaluate.py --split smoke`.
 4. Score and record it: `python3 tools/experiment.py finish`
-   This runs the training scenarios (~5.5 min; seed 12 is a 3-hour peak session), KEEPS the change (git commit) only if hard
+   This runs the training scenarios (19 sessions, ~1 min on 12 cores; seed 18 is a 3-hour peak session), KEEPS the change (git commit) only if hard
    violations did not increase, approach/taxi rule violations (5-9, 3-7) did
    not increase, and the score went down; otherwise it reverts `controller.py`. Never commit or
    revert yourself.

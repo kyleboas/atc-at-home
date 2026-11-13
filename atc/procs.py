@@ -21,7 +21,17 @@ from .world import K
 APPROACH_IDS = {  # runway -> {kind: CIFP id}  (kinds: ils, gps = RNAV (GPS), rnav = RNAV (RNP))
     "28L": {"ils": "I28L", "gps": "R28L"},
     "28R": {"ils": "I28R", "gps": "R28RZ", "rnav": "H28RY"},
+    "19L": {"ils": "I19L", "gps": "R19L"},
+    "19R": {"gps": "R19RY"},                     # no ILS
+    "10L": {"gps": "R10L"},                      # no ILS
+    "10R": {"gps": "R10RY", "rnav": "H10RZ"},    # no ILS
 }
+
+
+def default_approach(runway):
+    """The approach a runway gets when the requested one is not published for it (ILS, else GPS)."""
+    ids = APPROACH_IDS.get(runway, {})
+    return "ils" if "ils" in ids else "gps"
 APPROACH_NAMES = {pid: K.PROCEDURES[pid]["name"] for r in APPROACH_IDS.values() for pid in r.values()}
 
 

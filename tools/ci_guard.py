@@ -17,6 +17,11 @@ MODULES = {"math", "heapq", "bisect", "collections", "itertools", "functools", "
 BANNED_CALLS = {"eval", "exec", "compile", "open", "__import__", "getattr", "setattr", "delattr", "globals",
                 "locals", "vars", "breakpoint", "input", "memoryview", "help", "exit", "quit", "object"}
 BANNED_NAMES = {"__builtins__", "__loader__", "__spec__", "__file__", "builtins", "sys", "os"}
+# the controller works from the runways in use (W.ARR_RUNWAYS, W.DEP_RUNWAYS, ...), as a real
+# controller does from the ATIS: it may not look the configuration up by name, so it has to handle
+# configurations it has never seen (the holdout has some)
+BANNED_ATTRS = {"CONFIG_KEY", "CONFIGS", "CONFIG", "set_config"}
+BANNED_STRINGS = {"config", "config_key"}
 MUTATORS = {"append", "extend", "insert", "pop", "remove", "clear", "update", "setdefault", "popitem",
             "add", "discard", "sort", "reverse", "__setitem__", "__delitem__"}
 
@@ -46,6 +51,10 @@ def check(src, filename="controller.py"):
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
             bad(node, f"dunder attribute .{node.attr} is not allowed")
+        elif isinstance(node, ast.Attribute) and node.attr in BANNED_ATTRS:
+            bad(node, f".{node.attr}: use the runways in use, not the configuration's name")
+        elif isinstance(node, ast.Constant) and node.value in BANNED_STRINGS:
+            bad(node, f"'{node.value}': use the runways in use, not the configuration's name")
         elif isinstance(node, ast.Name) and node.id in BANNED_NAMES:
             bad(node, f"name {node.id} is not allowed")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in BANNED_CALLS:

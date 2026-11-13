@@ -36,6 +36,7 @@ Baseline behaviour, by FAA JO 7110.65 paragraph:
              1,000 ft under arrivals ahead (5-5-4), never below the MVA (5-6-3) or the present
              altitude; hand to center at the boundary (2-1-17).
 """
+import functools
 import heapq
 import math
 
@@ -140,12 +141,45 @@ def slowest_time(perf, rem, alt, gs_now=None):
     return time_to_go(perf, rem, alt, gs_now, caps=caps)
 
 
-RWY28R = W.RUNWAYS["28R"]
-LOC_T = RWY28R.loc_course                   # true
-DOWNWIND_T, BASE_T = W.mag2true(90), W.mag2true(180)
+class Pattern:
+    """The radar pattern to the vector runway of the configuration: downwind, base and a 30 degree
+    intercept on the right of the final (28R: from the north; 19L: from the west). Written for 28R
+    (downwind 090, base 180, intercept 254, base turn by x east of the field) and rotated onto the
+    other runways: px/py are the 28R-frame coordinates of a point, hdg() the heading for a 28R one."""
+
+    def __init__(self):
+        self.set("28R")
+
+    def set(self, ident):
+        self.rwy = W.RUNWAYS[ident]
+        self.ident = ident
+        ref = W.RUNWAYS["28R"]
+        self.rot = round(W.ang_diff(ref.loc_course, self.rwy.loc_course))     # degrees, 0 for 28R
+        ex, ey = W.unit(90 + self.rot)
+        nx, ny = W.unit(self.rot)
+        self.ex, self.ey = (ex, ey), (nx, ny)
+        # the point standing where the ARP does for 28R (same place relative to the threshold)
+        dx, dy = -ref.thr[0], -ref.thr[1]
+        self.origin = (self.rwy.thr[0] + dx * ex + dy * nx, self.rwy.thr[1] + dx * ey + dy * ny)
+        self.loc_t = self.rwy.loc_course
+        self.downwind_t, self.base_t = W.mag2true(self.hdg(90)), W.mag2true(self.hdg(180))
+        self.intercept_mag = self.hdg(254)        # 30 degrees to the localizer (5-9-2)
+        self.intercept_t = W.mag2true(self.intercept_mag)
+        self.kind = "ils" if "ils" in P.APPROACH_IDS.get(ident, {}) else "gps"
+
+    def hdg(self, h):
+        h = int(round((h + self.rot) % 360))
+        return 360 if h == 0 else h
+
+    def px(self, x, y):
+        return (x - self.origin[0]) * self.ex[0] + (y - self.origin[1]) * self.ex[1]
+
+    def py(self, x, y):
+        return (x - self.origin[0]) * self.ey[0] + (y - self.origin[1]) * self.ey[1]
+
+
+PAT = Pattern()
 MAYDAY_MARGIN_S = 180      # a Mayday's slot must land this far inside its fuel deadline, or it diverts
-INTERCEPT_MAG = 254                         # 30 degrees to the 28R localizer (284 mag), from the north (5-9-2)
-INTERCEPT_T = W.mag2true(INTERCEPT_MAG)
 DOWNWIND_ALT = 7000
 INTERCEPT_OFFSET = 2.6                      # nm right of the final course when turning to intercept
 X_BASE_MIN, X_BASE_MAX = 15.5, 19.0         # base turn between ~10 and ~16 nm finals (trombone)
@@ -153,52 +187,91 @@ TROMBONE_S = (X_BASE_MAX - X_BASE_MIN) * 2 / 210 * 3600 * 0.8     # delay the do
 
 # where each STAR stream holds when it must absorb delay (a fix on the STAR, base altitude)
 HOLD_FIX = {"SERFR4": ("FOLET", 8000), "DYAMD5": ("FRELY", 8000), "YOSEM3": ("SOOIE", 11000),
-            "BDEGA4": ("BDEGA", 12000)}
+            "BDEGA4": ("BDEGA", 12000),
+            "WWAVS2": ("WPOUT", 11000), "ALWYS3": ("ADDMM", 9000), "STLER4": ("LOZIT", 11000)}
 # turn direction: holding side away from the neighbouring stream (SOOIE left: DYAMD5 passes north)
 HOLD_TURNS = {"FOLET": "right", "FRELY": "right", "SOOIE": "left", "BDEGA": "right"}
 HOLD_LAP_S = 240
 EARLY_EXIT_S = 60           # a holder at the fix leaves this much early rather than fly another lap
 
 
+def vector_star(a):
+    """The arrival's STAR ends in vectors (BDEGA4 at BRIXX, STLER4 / WWAVS2 at MVRKK, 5-6-2)."""
+    return _star_vec(a["star"], a["runway"]) if a.get("star") else False
+
+
+@functools.lru_cache(maxsize=None)
+def _star_vec(star, runway):
+    """Ends in vectors, at a fix that is not on the approach (ALWYS3 ends at BERKS, the ILS 19L IF:
+    it joins the approach there)."""
+    end, vec = P.star_end(P.star_legs(star, None, runway))
+    if not vec:
+        return False
+    pid = P.APPROACH_IDS.get(runway, {}).get(P.default_approach(runway))
+    return not (pid and end in [lg.get("fix") for lg in P.approach_legs(pid)])
+
+
+# where a STAR that ends in vectors is turned downwind (BDEGA4 before BRIXX over the field; STLER4
+# and WWAVS2 to 19L at MVRKK, where their charted heading 360 is already the downwind)
+DOWNWIND_FIX = {"BDEGA4": "CORKK"}          # others: the STAR's last fix (MVRKK, PDROW, PLLAR)
+
+
+@functools.lru_cache(maxsize=None)
+def downwind_fix(star, runway):
+    if star in DOWNWIND_FIX:
+        return DOWNWIND_FIX[star]
+    return P.star_end(P.star_legs(star, None, runway))[0]
+
+
+@functools.lru_cache(maxsize=None)
+def after_fix(star, runway):
+    """The STAR fix after its downwind fix (BRIXX after CORKK); None where the downwind fix is the last."""
+    fixes = [lg["fix"] for lg in P.star_legs(star, None, runway) if lg.get("fix") and lg["pt"] not in ("FM", "VM")]
+    d = downwind_fix(star, runway)
+    i = fixes.index(d) if d in fixes else -1
+    return fixes[i + 1] if 0 <= i < len(fixes) - 1 else None
+
+
 def final_xy(d):
-    """Point on the 28R extended final d nm before the threshold."""
-    return RWY28R.xy(RWY28R.u_thr - d)
+    """Point on the vector runway's extended final d nm before the threshold."""
+    return PAT.rwy.xy(PAT.rwy.u_thr - d)
 
 
 def offset_right(x, y):
-    """nm right (north) of the 28R final course, and distance to the threshold along it."""
-    a, v = RWY28R.to_thr(x, y)
+    """nm right of the vector runway's final course (28R: north), and distance to the threshold along it."""
+    a, v = PAT.rwy.to_thr(x, y)
     return v, a                              # v > 0: right of the inbound course (north)
 
 
 def vector_path(x, y, hdg, gs, phase, x_base=None):
-    """Track miles of the downwind/base/intercept pattern from here to the 28R threshold.
-    phase 'downwind' with x_base (turn base when x reaches it), 'base', 'intercept'."""
+    """Track miles of the downwind/base/intercept pattern from here to the threshold.
+    phase 'downwind' with x_base (turn base when px reaches it), 'base', 'intercept'."""
     R = max(1.0, (gs / 3600) / math.radians(min(3.0, math.degrees(9.80665 / 1852 * math.tan(math.radians(25)) / max(gs / 3600, 0.02)))))
     p = (x, y)
     L = 0.0
     if phase == "downwind":
-        ux, uy = W.unit(DOWNWIND_T)
+        ux, uy = W.unit(PAT.downwind_t)
         # project to the base turn
-        if x_base is not None and x < x_base:
-            k = (x_base - x) / max(0.2, ux)
+        px = PAT.px(x, y)
+        if x_base is not None and px < x_base:
+            k = (x_base - px) / max(0.2, ux * PAT.ex[0] + uy * PAT.ex[1])
             p = (x + ux * k, y + uy * k)
             L += k
         L += R * math.pi / 2
-        bx, by = W.unit(BASE_T)
+        bx, by = W.unit(PAT.base_t)
         p = (p[0] + ux * R + bx * R, p[1] + uy * R + by * R)
         phase = "base"
     if phase == "base":
         v, a = offset_right(*p)
-        bx, by = W.unit(BASE_T)
+        bx, by = W.unit(PAT.base_t)
         # base runs nearly perpendicular to the final course: distance to the intercept turn
-        closing = math.sin(math.radians(abs(W.ang_diff(LOC_T, BASE_T))))
+        closing = math.sin(math.radians(abs(W.ang_diff(PAT.loc_t, PAT.base_t))))
         k = max(0.0, (v - INTERCEPT_OFFSET) / max(0.3, closing))
         p = (p[0] + bx * k, p[1] + by * k)
-        L += k + R * math.radians(abs(W.ang_diff(BASE_T, INTERCEPT_T)))
+        L += k + R * math.radians(abs(W.ang_diff(PAT.base_t, PAT.intercept_t)))
         phase = "intercept"
     v, a = offset_right(*p)
-    ang = math.radians(abs(W.ang_diff(LOC_T, INTERCEPT_T)))
+    ang = math.radians(abs(W.ang_diff(PAT.loc_t, PAT.intercept_t)))
     leg = max(0.0, v) / max(0.2, math.sin(ang))
     a_join = a - max(0.0, v) / math.tan(ang)
     L += leg
@@ -209,6 +282,8 @@ def vector_path(x, y, hdg, gs, phase, x_base=None):
 class Controller:
     def reset(self, info):
         self.info = info
+        arr = info.get("arr_runways") or ("28R",)
+        PAT.set("28R" if "28R" in arr else arr[0])      # the runway radar vectors go to
         self.types = info["types"]
         self.done = {}
         self.last_cmd = {}
@@ -272,10 +347,10 @@ def landing_eta(ctl, a):
     rem = a.get("rem_nm")
     if a["nav"] == "heading" and a["leg"] == "vectors":
         if sched and sched["phase"] in ("downwind", "base", "intercept"):
-            xb = max(X_BASE_MIN, a["x"]) if sched["phase"] == "downwind" else None
+            xb = max(X_BASE_MIN, PAT.px(a["x"], a["y"])) if sched["phase"] == "downwind" else None
             L, a_join = vector_path(a["x"], a["y"], a["hdg"], a["gs"], sched["phase"], xb)
             return L / max(a["gs"], 150) * 3600 + time_to_go(ctl.perf(a), a_join, min(a["alt"], a_join * 320))
-    if a["star"] == "BDEGA4" and not sched and a["nav"] == "lnav" and not a["approach_cleared"]:
+    if not sched and a["nav"] == "lnav" and not a["approach_cleared"] and vector_star(a):
         return bdega_eta(ctl, a)
     if rem is None:
         return None
@@ -298,14 +373,15 @@ def route_dist(a, upto):
 
 
 def bdega_eta(ctl, a):
-    """BDEGA4 ends in vectors at BRIXX: the STAR to CORKK, then our downwind/base/intercept pattern
-    with the earliest base turn, then the final."""
+    """A STAR that ends in vectors (BDEGA4 at BRIXX): the STAR to its downwind fix (CORKK), then our
+    downwind/base/intercept pattern with the earliest base turn, then the final."""
     route = a["route"] or []
-    if "CORKK" in route:
-        d, p = route_dist(a, "CORKK")
+    dfix = downwind_fix(a["star"], a["runway"])
+    if dfix in route:
+        d, p = route_dist(a, dfix)
     else:
         d, p = 0.0, (a["x"], a["y"])
-    L, a_join = vector_path(p[0], p[1], DOWNWIND_T, 230, "downwind", X_BASE_MIN)
+    L, a_join = vector_path(p[0], p[1], PAT.downwind_t, 230, "downwind", X_BASE_MIN)
     v1 = max(a["gs"], 200)
     t1 = d / v1 * 3600
     if a["holding"]:
@@ -1140,9 +1216,9 @@ class Approach:
             return False
         if v["phase"] == "downwind":
             gs = max(a["gs"], 180)
-            L, a_join = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(X_BASE_MAX + 6, a["x"]))
+            L, a_join = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(X_BASE_MAX + 6, PAT.px(a["x"], a["y"])))
             T = L / gs * 3600 + time_to_go(self.c.perf(a), a_join, a_join * 320)
-            L0, j0 = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(X_BASE_MIN, a["x"]))
+            L0, j0 = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(X_BASE_MIN, PAT.px(a["x"], a["y"])))
             T0 = L0 / gs * 3600 + time_to_go(self.c.perf(a), j0, j0 * 320)
             return delay > (T - T0) + 200
         if v["phase"] == "base":
@@ -1177,20 +1253,20 @@ class Approach:
             if a is None or a["freq"] != "approach" or r["kind"] != "check_in" or not c.quiet(a["cs"], 2):
                 continue
             if a["missed"]:
-                c.send(out, C.expect_approach(a["cs"], approach="ils", runway="28R", then="expect_vectors"))
+                c.send(out, C.expect_approach(a["cs"], approach=PAT.kind, runway=PAT.ident, then="expect_vectors"))
                 self.vec[a["cs"]] = {"phase": "missed"}
                 self.committed.pop(a["cs"], None)
                 self.key.pop(a["cs"], None)
                 self.cleared.discard(a["cs"])
                 self.slow.discard(a["cs"])
-                self.kind[a["cs"]] = "ils"
+                self.kind[a["cs"]] = PAT.kind
                 continue
             kind = a["approach_request"] or "ils"
             then = "continue_as_filed"
             if kind not in P.APPROACH_IDS.get(a["runway"], {}):
-                kind = "ils"
-            if a["star"] == "BDEGA4":                 # the STAR ends in vectors: ILS off a radar intercept
-                kind, then = "ils", "expect_vectors"
+                kind = P.default_approach(a["runway"])
+            if vector_star(a):                       # the STAR ends in vectors: ILS off a radar intercept
+                kind, then = P.default_approach(a["runway"]), "expect_vectors"
             c.send(out, C.expect_approach(a["cs"], approach=kind, runway=a["runway"], then=then))
             self.kind[a["cs"]] = kind
         arr = self.schedule(acs, t)
@@ -1317,11 +1393,13 @@ class Approach:
         rem = a["rem_nm"] or 99
         if not c.quiet(cs, 6):
             return
-        # BDEGA4 ends in vectors at BRIXX: downwind from CORKK (5-6-2)
-        if a["star"] == "BDEGA4" and not a["holding"] and a["hold_fix"] is None \
-                and (a["leg"] == "vectors" or (route and route[0] == "BRIXX")):
-            alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
-            c.send(out, C.vector(cs, heading=90, altitude=alt))
+        # a STAR that ends in vectors (BDEGA4 at BRIXX): downwind from its downwind fix (CORKK, 5-6-2)
+        vs = vector_star(a)
+        dfix = downwind_fix(a["star"], a["runway"]) if vs else None
+        if vs and not a["holding"] and a["hold_fix"] is None \
+                and (a["leg"] == "vectors" or (route and route[0] == after_fix(a["star"], a["runway"]))):
+            alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"])))
+            c.send(out, C.vector(cs, heading=PAT.hdg(90), altitude=alt))
             out.append(C.maintain_speed(cs, kts=210, mode=None))
             self.vec[cs] = {"phase": "downwind"}
             self.speed[cs] = (210, "kts")
@@ -1336,7 +1414,7 @@ class Approach:
         if a["hold_fix"] is not None:
             return
         # 1) holds at the stream's fix when speed alone cannot absorb the delay (4-6-1), stacked 1,000 ft
-        absorb = absorbable(c.perf(a), rem, a["alt"]) if a["star"] != "BDEGA4" else TROMBONE_S
+        absorb = absorbable(c.perf(a), rem, a["alt"]) if not vs else TROMBONE_S
         if delay > absorb + 15 and delay < absorb + 150 and cs not in self.cleared and rem > 12 \
                 and c.quiet(cs, 30) and self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs):
             c.send(out, C.make_360(cs, direction="right"))           # ~150 s of delay (5-6-2)
@@ -1492,7 +1570,7 @@ class Approach:
         same = sorted((hh["alt"], o) for o, hh in self.hold.items()
                       if o in acs and hh["fix"] == h["fix"] and not hh.get("out"))
         lowest = same and same[0][1] == cs
-        absorb = absorbable(c.perf(a), a["rem_nm"] or 0, a["alt"]) if a["star"] != "BDEGA4" else 30.0
+        absorb = absorbable(c.perf(a), a["rem_nm"] or 0, a["alt"]) if not vector_star(a) else 30.0
         # the pilot leaves only at the fix: at the last passage before it is due out, leave now
         # (up to EARLY_EXIT_S early, absorbed by speed or a 360) rather than a lap late
         early = 0.0
@@ -1529,15 +1607,15 @@ class Approach:
         ph = v["phase"]
         if ph == "missed":
             # runway heading to the missed approach altitude, then right turn north over the bay
-            if a["alt"] > 1500 and a["x"] < -1.5:
-                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(360), a["gs"])))
-                c.send(out, C.vector(cs, heading=360, altitude=alt))
+            if a["alt"] > 1500 and PAT.px(a["x"], a["y"]) < -1.5:
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(PAT.hdg(360)), a["gs"])))
+                c.send(out, C.vector(cs, heading=PAT.hdg(360), altitude=alt))
                 v["phase"] = "missed_north"
             return
         if ph == "missed_north":
-            if a["y"] > 4.0:
-                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], DOWNWIND_T, a["gs"])))
-                c.send(out, C.vector(cs, heading=90, altitude=alt))
+            if PAT.py(a["x"], a["y"]) > 4.0:
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"])))
+                c.send(out, C.vector(cs, heading=PAT.hdg(90), altitude=alt))
                 out.append(C.maintain_speed(cs, kts=210, mode=None))
                 self.speed[cs] = (210, "kts")
                 v["phase"] = "downwind"
@@ -1545,7 +1623,8 @@ class Approach:
         if ph == "downwind":
             xb = self.plan_base(a)
             v["x_base"] = xb
-            if not a["leg"] == "360" and self.trombone_short(a, max(xb, a["x"])) > 60:
+            ax = PAT.px(a["x"], a["y"])
+            if not a["leg"] == "360" and self.trombone_short(a, max(xb, ax)) > 60:
                 # more delay than the trombone can take: a 360 on the downwind, away from the
                 # final (5-6-2), or slow down if traffic follows, rather than turning base early
                 # into the other streams' slots (5-9-6)
@@ -1557,16 +1636,16 @@ class Approach:
                     c.send(out, C.maintain_speed(cs, kts=180, mode=None))
                     self.speed[cs] = (180, "kts")
                     return
-            if a["x"] >= xb and a["x"] < X_BASE_MAX + 7 and self.join_conflict(a, "downwind", acs, a["x"]):
+            if ax >= xb and ax < X_BASE_MAX + 7 and self.join_conflict(a, "downwind", acs, ax):
                 return                               # extend the downwind: the final is busy there
-            if a["x"] >= xb:
-                v["x_base"] = a["x"]
+            if ax >= xb:
+                v["x_base"] = ax
                 alt = self.intercept_alt(a, "base")
-                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], BASE_T, a["gs"])))
+                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], PAT.base_t, a["gs"])))
                 if cs in self.level:
-                    c.send(out, C.vector(cs, heading=180))
+                    c.send(out, C.vector(cs, heading=PAT.hdg(180)))
                 else:
-                    c.send(out, C.vector(cs, heading=180, altitude=alt))
+                    c.send(out, C.vector(cs, heading=PAT.hdg(180), altitude=alt))
                 v["phase"] = "base"
                 self.committed[cs] = self.sta.get(cs, c.t)
             return
@@ -1591,14 +1670,15 @@ class Approach:
                     self.speed[cs] = (160, "app")
                     return
             R = (a["gs"] / 3600) / math.radians(2.2)
-            lead = R * (1 - math.cos(math.radians(abs(W.ang_diff(BASE_T, INTERCEPT_T)))))
-            if off <= INTERCEPT_OFFSET + lead and abs(W.ang_diff(a["hdg"], BASE_T)) < 8:
+            lead = R * (1 - math.cos(math.radians(abs(W.ang_diff(PAT.base_t, PAT.intercept_t)))))
+            if off <= INTERCEPT_OFFSET + lead and abs(W.ang_diff(a["hdg"], PAT.base_t)) < 8:
                 alt = self.intercept_alt(a, "intercept")
-                c.send(out, C.cleared_approach(cs, approach="ils", runway="28R", heading=INTERCEPT_MAG, altitude=alt))
+                c.send(out, C.cleared_approach(cs, approach=PAT.kind, runway=PAT.ident, heading=PAT.intercept_mag,
+                                               altitude=alt))
                 if a["alt"] > alt + 200 and cs not in self.level:
                     # maintain-until-established holds a higher aircraft level: descend it to the
                     # intercept altitude so it joins from below the glidepath (5-9-1)
-                    out.append(C.vector(cs, heading=INTERCEPT_MAG, altitude=alt))
+                    out.append(C.vector(cs, heading=PAT.intercept_mag, altitude=alt))
                 out.append(C.approach_speed(cs, kts=180, until_nm=6))
                 self.speed[cs] = (180, "app")
                 v["phase"] = "intercept"
@@ -1617,7 +1697,7 @@ class Approach:
             if o != a["cs"] and v.get("x_base") and v["phase"] in ("downwind", "base") and self.sta.get(o, 0) < mine:
                 xb = max(xb, v["x_base"] + 4.0)
         while xb < X_BASE_MAX:
-            L, a_join = vector_path(a["x"], a["y"], a["hdg"], max(a["gs"], 200), "downwind", max(xb, a["x"]))
+            L, a_join = vector_path(a["x"], a["y"], a["hdg"], max(a["gs"], 200), "downwind", max(xb, PAT.px(a["x"], a["y"])))
             T = L / max(a["gs"], 200) * 3600 + time_to_go(perf, a_join, a_join * 320)
             if T >= target - 5:
                 break
@@ -1625,7 +1705,7 @@ class Approach:
         # vectored traffic behind us in the sequence but already further out on the downwind
         # turns base after us, 4 nm further out: leave it room before the downwind limit
         behind = sum(1 for o, v in self.vec.items() if o != a["cs"] and v["phase"] == "downwind"
-                     and self.sta.get(o, 0) > mine and o in self.acs and self.acs[o]["x"] > a["x"])
+                     and self.sta.get(o, 0) > mine and o in self.acs and PAT.px(self.acs[o]["x"], self.acs[o]["y"]) > PAT.px(a["x"], a["y"]))
         return min(max(xb, X_BASE_MIN), X_BASE_MAX + 6 - 4.0 * behind)
 
     def join_conflict(self, a, phase, acs, x_base=None):
@@ -1658,13 +1738,13 @@ class Approach:
         ahead of the slot."""
         target = self.sta.get(a["cs"], self.c.t) - self.c.t
         gs = max(a["gs"], 180)
-        L, a_join = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(xb, a["x"]))
+        L, a_join = vector_path(a["x"], a["y"], a["hdg"], gs, "downwind", max(xb, PAT.px(a["x"], a["y"])))
         T = L / gs * 3600 + time_to_go(self.c.perf(a), a_join, a_join * 320)
         return target - T
 
     def intercept_alt(self, a, phase):
         L, a_join = vector_path(a["x"], a["y"], a["hdg"], a["gs"], phase)
-        gs_alt = RWY28R.glide_alt(max(2.0, a_join), RWY28R.gs_angle)
+        gs_alt = PAT.rwy.glide_alt(max(2.0, a_join), PAT.rwy.gs_angle)
         return max(2000, min(alt_below(gs_alt - 200), 5000))      # below the glideslope at the join (5-9-1)
 
     def handoffs(self, acs, out):

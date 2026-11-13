@@ -422,7 +422,7 @@ class Monitor:
                and a.runway in W.ARR_RUNWAYS and a.legs and a.legs[0]["tag"] == "final"]
         if len(fin) < 2:
             return
-        ref = W.RUNWAYS["28R"]
+        ref = W.RUNWAYS[W.ARR_RUNWAYS[-1]]          # one along-final measure for the parallels
         d = {a.cs: ref.to_thr(a.x, a.y)[0] for a in fin}
         for a in fin:
             for b in fin:

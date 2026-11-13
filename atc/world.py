@@ -7,8 +7,9 @@ ARP). Headings and courses inside the sim are TRUE; everything the controller
 says or the pilots read back (assigned headings, CIFP courses) is MAGNETIC, using
 the CIFP airport variation (14.0 E). Altitudes are ft MSL (field 13 ft).
 
-Airport configuration: the West Plan, SFO's normal one. Arrivals land 28L and
-28R, departures use 01L and 01R. The 01s physically cross both 28s about
+Airport configuration: one of CONFIGS per scenario (set_config). The West Plan is SFO's
+normal one: arrivals land 28L and 28R, departures use 01L and 01R (heavies 28R). The 01s
+physically cross both 28s about
 4,600-5,400 ft past the 28 thresholds, so every 01 departure is an
 intersecting-runway operation against every 28 arrival (7110.65 3-9-8 / 3-10-4
 "Intersecting"). 28L/28R are 750 ft apart (closely spaced parallels, one
@@ -41,13 +42,60 @@ TOWER_NM = 5.0                    # tower ring, up to 5,000 ft AAL
 TOWER_CEILING = 5000 + ELEV
 SID_TOP = 5000                    # initial climb until radar contact
 
-CONFIG = "West Plan"
-ARR_RUNWAYS = ("28L", "28R")
-DEP_RUNWAYS = ("01L", "01R")
-CSPR = {"28L": "28R", "28R": "28L", "01L": "01R", "01R": "01L"}     # < 2500 ft apart
-ATIS = ("KSFO information {info}. West Plan: landing runways 28L and 28R, departing runways 01L and 01R. "
-        "Simultaneous parallel ILS and RNAV approaches in use. Wind 290 at 14. Visibility 10. "
-        "Hold short of all runways; readback of all hold short instructions required.")
+# Runway configurations seen in real KSFO operations (ADS-B, see CONFIG_SOURCE). Each scenario
+# runs one of them: world.set_config(key) switches the active runways and everything derived
+# from them (IN_USE, INTERSECTIONS, EXITS, LINEUP, DEP_HOLD, ATIS).
+#   arr        landing runways
+#   dep        departure runways
+#   dep_heavy  where heavies / supers depart (long runway), dep_heavy_share of them; the
+#              others use `dep` like everyone else
+#   aar        arrival acceptance rate per hour (ground delay program)
+CONFIG_SOURCE = ("ADS-B (adsb.fi heatmap archive) at KSFO, 14 Nov 2025 - 13 Nov 2026, three half-hour "
+                 "samples a day (1,093 samples, ~34,000 flights); landing / departure runway of every "
+                 "flight from its track. Share of the year: 28s 52 % (nearly all of April-September), "
+                 "West Plan 39 % (departures 15 % off the 28s), single arrival runway 5 % (28R 4, 28L 1), "
+                 "Southeast 3 %, East 0.4 %")
+CONFIGS = {
+    "west": dict(name="West Plan", arr=("28L", "28R"), dep=("01L", "01R"),
+                 dep_heavy=("28L", "28R"), dep_heavy_share=0.6, aar=36,
+                 atis="landing runways 28L and 28R, departing runways 01L and 01R, heavy departures "
+                 "runways 28L and 28R. Simultaneous parallel ILS and RNAV approaches in use.",
+                 wind="290 at 14"),
+    "west_28r": dict(name="West Plan, single runway arrivals", arr=("28R",), dep=("01L", "01R"),
+                     dep_heavy=("28L", "28R"), dep_heavy_share=0.6, aar=30,
+                     atis="landing runway 28R, departing runways 01L and 01R, heavy departures runways "
+                     "28L and 28R. ILS runway 28R approach in use.", wind="280 at 8"),
+    "west_28l": dict(name="West Plan, single runway arrivals", arr=("28L",), dep=("01L", "01R"),
+                     dep_heavy=("28L", "28R"), dep_heavy_share=0.6, aar=30,
+                     atis="landing runway 28L, departing runways 01L and 01R, heavy departures runways "
+                     "28L and 28R. ILS runway 28L approach in use.", wind="280 at 8"),
+    "west_28s": dict(name="West Plan, departures 28L and 28R", arr=("28L", "28R"), dep=("28L", "28R"),
+                     aar=36, atis="landing and departing runways 28L and 28R. Simultaneous parallel ILS "
+                     "and RNAV approaches in use.", wind="230 at 12"),
+    "southeast": dict(name="Southeast Plan", arr=("19L",), dep=("10L", "10R"), aar=30,
+                      atis="ILS runway 19L approach in use, landing runway 19L, departing runways 10L "
+                      "and 10R. Departing aircraft should be prepared for a short notice runway change.",
+                      wind="160 at 16"),
+    # two real variants kept out of training (holdout only): does the controller generalise?
+    "west_28r_28s": dict(name="West Plan, 28R arrivals, departures 28L and 28R", arr=("28R",), dep=("28L", "28R"),
+                         aar=30, atis="landing runway 28R, departing runways 28L and 28R. ILS runway 28R approach "
+                         "in use.", wind="250 at 10"),
+    "west_dep28l": dict(name="West Plan, departures 28L", arr=("28L", "28R"), dep=("28L",), aar=36,
+                        atis="landing runways 28L and 28R, departing runway 28L. Simultaneous parallel ILS and "
+                        "RNAV approaches in use.", wind="260 at 12"),
+    "east": dict(name="East Plan", arr=("10L",), dep=("10R",), aar=30,
+                 atis="RNAV runway 10L approach in use, landing runway 10L, departing runway 10R.",
+                 wind="090 at 10"),
+}
+CONFIG_KEY = None
+CONFIG = None
+ARR_RUNWAYS = ()
+DEP_RUNWAYS = ()
+DEP_HEAVY = ()
+ATIS = ""
+CSPR = {"28L": "28R", "28R": "28L", "01L": "01R", "01R": "01L",      # < 2500 ft apart
+        "10L": "10R", "10R": "10L", "19L": "19R", "19R": "19L"}
+ATIS_TAIL = ("Hold short of all runways; readback of all hold short instructions required.")
 
 
 def mag2true(m):
@@ -149,8 +197,6 @@ class Runway:
 RUNWAYS = {i: Runway(i) for i in sorted(K.RUNWAYS)}
 PAVEMENTS = sorted({r.pavement for r in RUNWAYS.values()})
 IN_USE = {}                              # pavement -> designator in the direction in use (3-7-2)
-for _i in ARR_RUNWAYS + DEP_RUNWAYS:
-    IN_USE[RUNWAYS[_i].pavement] = _i
 
 
 def runway_of_pavement(p):
@@ -172,16 +218,21 @@ def _intersect(r1, r2):
 
 
 INTERSECTIONS = {}                     # (rwy, other) -> u on rwy (nm), for the active runways
-for _a in ARR_RUNWAYS + DEP_RUNWAYS:
-    for _b in ARR_RUNWAYS + DEP_RUNWAYS:
-        if _a < _b and _b not in (CSPR.get(_a),):
-            _x = _intersect(RUNWAYS[_a], RUNWAYS[_b])
-            if _x:
-                INTERSECTIONS[(_a, _b)] = _x[0]
-                INTERSECTIONS[(_b, _a)] = _x[1]
 INTERSECTION_PTS = {}
-for (_a, _b), _u in INTERSECTIONS.items():
-    INTERSECTION_PTS[(_a, _b)] = RUNWAYS[_a].xy(_u)
+
+
+def _intersections(active):
+    out = {}
+    for a in active:
+        for b in active:
+            if a < b and b != CSPR.get(a) and RUNWAYS[a].pavement != RUNWAYS[b].pavement:
+                x = _intersect(RUNWAYS[a], RUNWAYS[b])
+                if x:
+                    out[(a, b)] = x[0]
+                    out[(b, a)] = x[1]
+    return out
+
+
 # "beyond the intersection" = past the far edge of the crossing runway (half width + margin)
 BEYOND_NM = 250.0 / FT_NM
 
@@ -252,7 +303,12 @@ def zone_runways(x, y, half_ft=165.0):
     return out
 
 
-NODE_ZONE = {n: tuple(zone_runways(*p)) for n, p in NODES.items()}
+NODE_ZONE = {n: tuple(zone_runways(*p)) for n, p in NODES.items()}       # updated by set_config
+
+
+def in_use(ident):
+    """The designator in use on the pavement of runway `ident` (ident itself if it is not active)."""
+    return IN_USE.get(RUNWAYS[ident].pavement, ident)
 HOLD_FT = 260.0           # where a pilot stops short of a runway (hold line ~250-280 ft from the CL)
 
 
@@ -430,14 +486,59 @@ def _lineups(ident):
     return out
 
 
-EXITS = {i: _exits(i) for i in ARR_RUNWAYS + DEP_RUNWAYS}       # departure runways: rejected takeoffs
-LINEUPS = {i: _lineups(i) for i in DEP_RUNWAYS}
-# full-length holding point on the terminal (west, left) side of each departure runway
-LINEUP = {}
-for _i in DEP_RUNWAYS:
-    _c = [e for e in LINEUPS[_i] if RUNWAYS[_i].uv(*NODES[e["hold"]])[1] < 0]
-    LINEUP[_i] = _c[0]
-DEP_HOLD = {i: LINEUP[i]["hold"] for i in DEP_RUNWAYS}
+_EXITS = {i: _exits(i) for i in RUNWAYS}              # every runway direction, computed once
+_LINEUPS = {i: _lineups(i) for i in RUNWAYS}
+_PAX_C = (sum(STANDS[k]["x"] for k in PAX_STANDS) / len(PAX_STANDS),
+          sum(STANDS[k]["y"] for k in PAX_STANDS) / len(PAX_STANDS))
+
+
+def _lineup(i):
+    """Full-length holding point for departures: on the left of the runway where that is the
+    terminal side (01L/01R: west), otherwise the one nearest the terminals."""
+    c = [e for e in _LINEUPS[i] if RUNWAYS[i].uv(*NODES[e["hold"]])[1] < 0]
+    if c and (i in ("01L", "01R") or dist(NODES[c[0]["hold"]], _PAX_C) <= min(
+            dist(NODES[e["hold"]], _PAX_C) for e in _LINEUPS[i]) + 0.05):
+        return c[0]
+    return min(_LINEUPS[i], key=lambda e: (round(dist(NODES[e["hold"]], _PAX_C), 2), e["u"]))
+
+
+EXITS, LINEUPS, LINEUP, DEP_HOLD = {}, {}, {}, {}       # for the active runways (departure runways: RTOs)
+
+
+def set_config(key):
+    """Make `key` (a CONFIGS key) the airport configuration in use."""
+    global CONFIG_KEY, CONFIG, ARR_RUNWAYS, DEP_RUNWAYS, DEP_HEAVY, ATIS
+    if key == CONFIG_KEY:
+        return
+    c = CONFIGS[key]
+    CONFIG_KEY, CONFIG = key, c["name"]
+    ARR_RUNWAYS = tuple(c["arr"])
+    dep = tuple(c["dep"]) + tuple(r for r in c.get("dep_heavy", ()) if r not in c["dep"])
+    DEP_RUNWAYS = dep
+    DEP_HEAVY = tuple(c.get("dep_heavy", ()))
+    ATIS = "KSFO information {info}. " + c["name"] + ": " + c["atis"] + " Wind " + c["wind"] + \
+        ". Visibility 10. " + ATIS_TAIL
+    active = tuple(dict.fromkeys(ARR_RUNWAYS + DEP_RUNWAYS))
+    IN_USE.clear()
+    for i in active:
+        IN_USE[RUNWAYS[i].pavement] = i
+    INTERSECTIONS.clear()
+    INTERSECTIONS.update(_intersections(active))
+    INTERSECTION_PTS.clear()
+    for (a, b), u in INTERSECTIONS.items():
+        INTERSECTION_PTS[(a, b)] = RUNWAYS[a].xy(u)
+    for d in (EXITS, LINEUPS, LINEUP, DEP_HOLD):
+        d.clear()
+    NODE_ZONE.update({n: tuple(zone_runways(*q)) for n, q in NODES.items()})
+    for i in active:
+        EXITS[i] = [dict(e, hold_short=in_use(e["hold_short"])) if e["hold_short"] else e for e in _EXITS[i]]
+    for i in DEP_RUNWAYS:
+        LINEUPS[i] = _LINEUPS[i]
+        LINEUP[i] = _lineup(i)
+        DEP_HOLD[i] = LINEUP[i]["hold"]
+
+
+set_config("west")
 
 
 def procedures():

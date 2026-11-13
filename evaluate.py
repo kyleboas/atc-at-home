@@ -1,11 +1,13 @@
 """Frozen evaluator. Runs the controller over a scenario split and scores it.
 
-    python3 evaluate.py                 # train split (what autoresearch uses): 12 x 40 min
+    python3 evaluate.py                 # train split (what autoresearch uses): 18 x 40 min + 3 h
     python3 evaluate.py --split smoke   # 2 quick scenarios (20 min)
     python3 evaluate.py --split holdout # humans only, before merging a change
 
-Lower cost is better. Cost is the average over scenarios of each scenario's cost per 40 minutes, so
-the 3-hour session (seed 12) counts like one train scenario at its rate, not 4.5 of them.
+Lower cost is better. Each scenario's cost is taken per 40 minutes (so the 3-hour session, seed 18,
+counts like one train scenario at its rate, not 4.5 of them), averaged within each runway
+configuration, then averaged over configurations: every configuration counts the same however
+many scenarios it has, so the controller has to be good in all of them (by_config shows each).
 Rules follow FAA Order JO 7110.65. Any hard violation (runway separation per 3-9-6, 3-9-8,
 3-10-3 and 3-10-4 incl. intersecting runways, a runway crossing per 3-1-3, radar or wake
 separation per 5-5-4 / 5-9-6, a conflict alert per 5-14-6, an airborne near miss, terrain per
@@ -85,7 +87,7 @@ def metrics(sim):
     delay_min = (dep_delay + push_hold / 4 + arr_delay + mon.req_wait_s + level_s / 2 + cross_wait / 2) / 60
     cost = (WEIGHTS["hard"] * sev["hard"] + WEIGHTS["rule"] * sev["rule"] + WEIGHTS["service"] * sev["service"]
             + WEIGHTS["go_around"] * go_arounds + delay_min)
-    return {"seed": sim.seed, "level": sim.sc["level"], "duration": sim.duration, "cost": round(cost, 2), "hard": sev["hard"],
+    return {"seed": sim.seed, "config": sim.sc.get("config", "west"), "level": sim.sc["level"], "duration": sim.duration, "cost": round(cost, 2), "hard": sev["hard"],
             "rule": sev["rule"], "service": sev["service"], "by_rule": by_rule, "by_pos": by_pos,
             "dep_level_min": round(level_s / 60, 2), "go_arounds": go_arounds,
             "delay_min": round(delay_min, 2), "dep_delay_min": round(dep_delay / 60, 2),
@@ -128,10 +130,21 @@ def main():
             by_rule[k] = by_rule.get(k, 0) + v
         for k, v in r["by_pos"].items():
             by_pos[k] = by_pos.get(k, 0) + v
+    # each session is scored per 40 minutes, so a 3-hour session weighs like a 40-minute one;
+    # then every runway configuration weighs the same
+    by_config = {}
+    for r in results:
+        b = by_config.setdefault(r["config"], {"scenarios": 0, "cost": 0.0, "hard": 0, "rule": 0})
+        b["scenarios"] += 1
+        b["cost"] += r["cost"] * SESSION_S / r["duration"]
+        b["hard"] += r["hard"]
+        b["rule"] += r["rule"]
+    for b in by_config.values():
+        b["cost"] = round(b["cost"] / b["scenarios"], 3)
+    by_config = dict(sorted(by_config.items()))
     summary = {
-        # each session is scored per 40 minutes, so a 3-hour session weighs like a 40-minute one
         "split": args.split, "scenarios": n,
-        "cost": round(sum(r["cost"] * SESSION_S / r["duration"] for r in results) / n, 3),
+        "cost": round(sum(b["cost"] for b in by_config.values()) / len(by_config), 3),
         "status": "PASS" if tot("hard") == 0 else "FAIL",
         "hard": tot("hard"), "rule": tot("rule"), "service": tot("service"), "go_arounds": tot("go_arounds"),
         "delay_min_per_scenario": round(tot("delay_min") / n, 2),
@@ -140,12 +153,13 @@ def main():
         "dep_level_min": round(tot("dep_level_min") / n, 2),
         "gdp_delay_min": round(tot("gdp_delay_min") / n, 2),
         "fuel_minimum": tot("fuel_minimum"), "fuel_emergency": tot("fuel_emergency"), "diverted": tot("diverted"),
+        "by_config": by_config,
         "violations_by_position": dict(sorted(by_pos.items())),
         "violations_by_rule": dict(sorted(by_rule.items())), "seconds": round(time.time() - t0, 1),
     }
     if args.per_scenario:
         for r in results:
-            print(json.dumps({k: r[k] for k in ("seed", "level", "cost", "hard", "rule", "go_arounds", "delay_min", "by_rule")}))
+            print(json.dumps({k: r[k] for k in ("seed", "config", "level", "cost", "hard", "rule", "go_arounds", "delay_min", "by_rule")}))
     for k, v in summary.items():
         print(f"{k + ':':26}{v}")
     print("JSON " + json.dumps(summary))

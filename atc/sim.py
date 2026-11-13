@@ -60,6 +60,7 @@ class Sim:
     def __init__(self, scenario, controller, record=False):
         self.sc = scenario
         self.seed = scenario["seed"]
+        W.set_config(scenario.get("config", "west"))      # the airport configuration of this session
         self.controller = controller
         self.record = record
         self.t = 0
@@ -95,7 +96,7 @@ class Sim:
                 probe = Aircraft(s, self.seed)              # own RNG: nothing shared is consumed
                 self.spawn_arrival(probe, s)
                 eta.append((s["t"] + probe.m["nominal"], s))
-        gap = 3600.0 / AAR
+        gap = 3600.0 / W.CONFIGS[W.CONFIG_KEY].get("aar", AAR)     # single-runway configurations accept fewer
         last = -INF
         for e, s in sorted(eta, key=lambda p: (p[0], p[1]["cs"])):
             slot = max(e, last + gap)
@@ -838,7 +839,7 @@ class Sim:
         ac.say(self, "request_pushback")
 
     def expect(self, ac, kind, runway):
-        pid = P.APPROACH_IDS.get(runway, {}).get(kind) or P.APPROACH_IDS.get(runway, {}).get("ils")
+        pid = P.APPROACH_IDS.get(runway, {}).get(kind) or P.APPROACH_IDS.get(runway, {}).get(P.default_approach(runway))
         ac.appr_exp, ac.runway = pid, runway
         end_fix, vec = P.star_end(P.star_legs(ac.star, ac.star_trans, runway))
         trans = P.transition_for(pid, end_fix) if end_fix else None
@@ -1318,7 +1319,8 @@ class Sim:
             ac.alt_assigned = None
             ac.set_legs(missed, (ac.x, ac.y))
         ac.missed_alt = m_alt
-        self.expect(ac, ac.appr_req if ac.appr_req in P.APPROACH_IDS.get(ac.runway, {}) else "ils", ac.runway)
+        self.expect(ac, ac.appr_req if ac.appr_req in P.APPROACH_IDS.get(ac.runway, {}) else P.default_approach(ac.runway),
+                    ac.runway)
 
     def fly_circuit(self, ac, side, runway):
         """Go around, make left/right traffic: a visual circuit at 1,500 ft (AIM 4-3-3, jets),
@@ -1330,7 +1332,7 @@ class Sim:
         ac.circuit = side
         ac.runway = runway
         rwy = W.RUNWAYS[runway]
-        pid = P.APPROACH_IDS[runway]["ils"]
+        pid = P.APPROACH_IDS[runway][P.default_approach(runway)]
         s = 1 if side == "right" else -1
         pa = PATTERN_ALT
         up = max(rwy.len_nm + 1.0, rwy.uv(ac.x, ac.y)[0] + 2.0)
