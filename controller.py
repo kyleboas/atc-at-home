@@ -141,6 +141,12 @@ def slowest_time(perf, rem, alt, gs_now=None):
     return time_to_go(perf, rem, alt, gs_now, caps=caps)
 
 
+def gate_nm(ident):
+    """Approach gate of the runway's default approach: 1 nm outside the FAF, at least 5 nm out."""
+    f = P.faf(P.APPROACH_IDS[ident][P.default_approach(ident)])
+    return max(5.0, (W.RUNWAYS[ident].to_thr(*f["pos"])[0] if f else 5.0) + 1.0)
+
+
 class Pattern:
     """The radar pattern to the vector runway of the configuration: downwind, base and a 30 degree
     intercept on the right of the final (28R: from the north; 19L: from the west). Written for 28R
@@ -161,6 +167,12 @@ class Pattern:
         # the point standing where the ARP does for 28R (same place relative to the threshold)
         dx, dy = -ref.thr[0], -ref.thr[1]
         self.origin = (self.rwy.thr[0] + dx * ex + dy * nx, self.rwy.thr[1] + dx * ey + dy * ny)
+        # a runway whose approach gate is further out (19L: FAF SHAKE 8.6 nm) gets the whole pattern
+        # pushed out along its final by the difference, so intercepts stay outside the gate (5-9-1)
+        self.gate_nm = gate_nm(ident)
+        sh = self.gate_nm - gate_nm("28R")
+        sh = sh if sh > 1.0 else 0.0
+        self.origin = (self.origin[0] + sh * ex, self.origin[1] + sh * ey)
         self.loc_t = self.rwy.loc_course
         self.downwind_t, self.base_t = W.mag2true(self.hdg(90)), W.mag2true(self.hdg(180))
         self.intercept_mag = self.hdg(254)        # 30 degrees to the localizer (5-9-2)
@@ -1376,7 +1388,7 @@ class Approach:
     def star_end(self, a):
         """The STAR's last fix, or None when the STAR ends in vectors (no published join)."""
         fix, vec = P.star_end(P.star_legs(a["star"], a["star_trans"], a["runway"]))
-        return None if vec else fix
+        return None if vec and vector_star(a) else fix
 
     def clear(self, a, out):
         """Approach clearance on the flight plan off the STAR's published transition (4-8-1,
@@ -1385,6 +1397,17 @@ class Approach:
         self.c.send(out, C.cleared_approach(cs, approach=self.kind_of(a), runway=a["runway"], altitude=3000))
         self.cleared.add(cs)
         self.committed[cs] = self.sta.get(cs, self.c.t)
+
+    def joins_off_heading(self, a):
+        """The STAR ends in a heading leg from a fix on the approach (ALWYS3 at BERKS): cleared on
+        the way to that fix it is established at once, so it must be down to the glidepath first."""
+        return P.star_end(P.star_legs(a["star"], a["star_trans"], a["runway"]))[1] and not vector_star(a)
+
+    def above_glidepath(self, a):
+        """Cleared here, the arrival would be established above the glidepath (5-9-1)."""
+        R = W.RUNWAYS[a["runway"]]
+        pid = P.APPROACH_IDS[a["runway"]].get(self.kind_of(a))
+        return a["alt"] > R.glide_alt(R.to_thr(a["x"], a["y"])[0], P.glide_angle(pid)) + 250
 
     def fly_star(self, a, delay, acs, out):
         c = self.c
@@ -1451,7 +1474,8 @@ class Approach:
         end = self.star_end(a)
         if end and cs not in self.cleared and a["leg"] == "star" and end in route and not through:
             p = W.K.FIXES.get(end)
-            if p and dist((a["x"], a["y"]), p) < 14 and route.index(end) <= 1:
+            if p and dist((a["x"], a["y"]), p) < 14 and route.index(end) <= 1 and \
+                    (not self.joins_off_heading(a) or not self.above_glidepath(a)):
                 self.clear(a, out)
                 return
         # 3) too early even at the slowest speed and no hold ahead: a 360 (5-6-2) if nobody follows close
