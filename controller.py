@@ -221,6 +221,7 @@ MAYDAY_MARGIN_S = 180      # a Mayday's slot must land this far inside its fuel 
 DOWNWIND_ALT = 7000
 INTERCEPT_OFFSET = 2.6                      # nm right of the final course when turning to intercept
 X_BASE_MIN, X_BASE_MAX = 15.5, 19.0         # base turn between ~10 and ~16 nm finals (trombone)
+BASE_LIMIT_NM = 25.0                        # latest base turn, along the final from the threshold
 TROMBONE_S = (X_BASE_MAX - X_BASE_MIN) * 2 / 210 * 3600 * 0.8     # delay the downwind extension absorbs
 
 # where each STAR stream holds when it must absorb delay (a fix on the STAR, base altitude)
@@ -1758,9 +1759,20 @@ class Approach:
                     c.send(out, C.maintain_speed(cs, kts=180, mode=None))
                     self.speed[cs] = (180, "kts")
                     return
-            if ax >= xb and ax < X_BASE_MAX + 7 and self.join_conflict(a, "downwind", acs, ax):
+            # base no further out than 25 nm along the final: base and a 30 degree intercept from the
+            # offset join ~4.5 nm closer in, inside where the final course can still be captured (5-9-2)
+            far = PAT.rwy.to_thr(a["x"], a["y"])[0] >= BASE_LIMIT_NM
+            if ax >= xb and ax < X_BASE_MAX + 7 and not far and self.join_conflict(a, "downwind", acs, ax):
                 return                               # extend the downwind: the final is busy there
-            if ax >= xb:
+            if far and a["leg"] != "360" and self.join_conflict(a, "downwind", acs, ax):
+                # at the limit with the final still busy: a 360 on the downwind (5-6-2) instead
+                if self.t360.get(cs, -999) < c.t - 200 and mva_clear_360(a):
+                    c.send(out, C.make_360(cs, direction="left"))
+                    self.t360[cs] = c.t
+                    return
+            if a["leg"] == "360":
+                return
+            if ax >= xb or far:
                 v["x_base"] = ax
                 # a downwind on the far side of the final (ALWYS3 at BERKS for 10L): base and
                 # intercept mirrored, toward the final from that side (5-9-2)
