@@ -1685,14 +1685,24 @@ class Approach:
                 return                               # extend the downwind: the final is busy there
             if ax >= xb:
                 v["x_base"] = ax
-                alt = self.intercept_alt(a, "base")
-                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], PAT.base_t, a["gs"])))
-                if cs in self.level:
-                    c.send(out, C.vector(cs, heading=PAT.hdg(180)))
+                # a downwind on the far side of the final (ALWYS3 at BERKS for 10L): base and
+                # intercept mirrored, toward the final from that side (5-9-2)
+                v["side"] = -1 if offset_right(a["x"], a["y"])[0] < -INTERCEPT_OFFSET else 1
+                base_mag = PAT.hdg(180) if v["side"] > 0 else PAT.hdg(360)
+                if v["side"] > 0:
+                    alt = self.intercept_alt(a, "base")
                 else:
-                    c.send(out, C.vector(cs, heading=PAT.hdg(180), altitude=alt))
+                    alt = self.mirrored_intercept_alt(a)
+                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(base_mag), a["gs"])))
+                if cs in self.level:
+                    c.send(out, C.vector(cs, heading=base_mag))
+                else:
+                    c.send(out, C.vector(cs, heading=base_mag, altitude=alt))
                 v["phase"] = "base"
                 self.committed[cs] = self.sta.get(cs, c.t)
+            return
+        if ph == "base" and v.get("side", 1) < 0:
+            self.mirrored_base(a, v, out)
             return
         if ph == "base":
             off, along = offset_right(a["x"], a["y"])
@@ -1730,6 +1740,34 @@ class Approach:
                 self.level.pop(cs, None)
                 self.cleared.add(cs)
             return
+
+    def mirrored_intercept_alt(self, a):
+        """Below the glidepath where a mirrored intercept joins, never below the MVA (5-9-1, 5-6-3)."""
+        _, along = offset_right(a["x"], a["y"])
+        join = along - INTERCEPT_OFFSET / math.tan(math.radians(30))
+        gs_alt = PAT.rwy.glide_alt(max(2.0, join), PAT.rwy.gs_angle)
+        return max(2000, min(alt_below(gs_alt - 200), 5000))
+
+    def mirrored_base(self, a, v, out):
+        """Base toward the final from its left side, then a 30 degree intercept from that side."""
+        c = self.c
+        cs = a["cs"]
+        off, along = offset_right(a["x"], a["y"])
+        base_t = W.mag2true(PAT.hdg(360))
+        icpt = PAT.hdg(314)
+        R = (a["gs"] / 3600) / math.radians(2.2)
+        lead = R * (1 - math.cos(math.radians(60)))
+        if -off <= INTERCEPT_OFFSET + lead and abs(W.ang_diff(a["hdg"], base_t)) < 8:
+            alt = max(self.mirrored_intercept_alt(a),
+                      alt_above(mva_ahead(a["x"], a["y"], W.mag2true(icpt), a["gs"])))
+            c.send(out, C.cleared_approach(cs, approach=PAT.kind, runway=PAT.ident, heading=icpt, altitude=alt))
+            if a["alt"] > alt + 200 and cs not in self.level:
+                out.append(C.vector(cs, heading=icpt, altitude=alt))
+            out.append(C.approach_speed(cs, kts=180, until_nm=6))
+            self.speed[cs] = (180, "app")
+            v["phase"] = "intercept"
+            self.level.pop(cs, None)
+            self.cleared.add(cs)
 
     def plan_base(self, a):
         """Turn base where the remaining pattern fits the slot (trombone), X_BASE_MIN..X_BASE_MAX east,
