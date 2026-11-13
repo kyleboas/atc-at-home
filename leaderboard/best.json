@@ -35,10 +35,10 @@
   "stuck": 94
  },
  "manual": 66,
- "rules": "347b80345be4",
- "commit": "e808aca",
+ "rules": "76d3506ced96",
+ "commit": "896e213",
  "author": "kyleboas",
- "note": "Gate hold at 4 departures; arrivals go around instead of cancelled takeoffs (score 1209.9 \u2192 1130.3) (#31)",
- "t": 1794531237.5289774,
- "status": "kept"
+ "note": "Rescore main on the fixed sim (#33): new rules batch",
+ "t": 1794531552.8676872,
+ "status": "baseline"
 }
