@@ -801,10 +801,12 @@ class Sim:
         ac.msg_due = (self.t + ac.rng.randint(3, 10), "check_in", {"alt": int(round(ac.alt, -2))})
 
     def fuel_check(self, ac):
-        """An arrival carries enough fuel for its planned time to land (nominal) plus fuel_extra_s.
-        Spare = fuel left minus the time still needed to land; the final reserve is not counted.
-        Minimum fuel (FAA InFO 08004, ICAO Annex 6) when under 5 min spare: an advisory, no priority.
-        Mayday fuel when spare runs out: it now expects to land on its final reserve."""
+        """An arrival carries its planned time to land (nominal), fuel_extra_s of contingency and
+        extra fuel, fuel_alt_s of alternate fuel (14 CFR 121.639) and the final reserve, which is
+        never counted. Spare = fuel left above alternate and reserve minus the time still needed to land.
+        Minimum fuel (FAA InFO 08004, ICAO Annex 6) when under 5 min spare: an advisory, no priority;
+        at zero spare the crew is at its diversion point and is burning its alternate fuel.
+        Mayday fuel when the alternate fuel is gone too: it now expects to land on its final reserve."""
         if ac.m["nominal"] is None or ac.m["t_diverted"] is not None:
             return
         if ac.m["fuel_state"] == "emergency":
@@ -815,11 +817,11 @@ class Sim:
             return
         left = ac.m["nominal"] + ac.fuel_extra_s - (self.t - ac.m["t_spawn"])
         spare = left - (self.eta(ac, F.remaining(ac)) or 0)
-        if spare < 0 and ac.m["fuel_state"] != "emergency":
+        if spare + ac.fuel_alt_s < 0 and ac.m["fuel_state"] != "emergency":
             ac.m["fuel_state"] = "emergency"
             ac.m["t_mayday"] = self.t
             ac.m["mayday_limit"] = self.t + (self.eta(ac, F.remaining(ac)) or 0) + MAYDAY_MARGIN_S
-            ac.say(self, "fuel_emergency", {"min": max(0, int(left / 60))})
+            ac.say(self, "fuel_emergency", {"min": max(0, int((left + ac.fuel_alt_s) / 60))})
             self.monitor.add("hard", "fuel", ac, "Mayday fuel: delayed until it would land below final reserve")
         elif spare < 300 and ac.m["fuel_state"] is None:
             ac.m["fuel_state"] = "minimum"

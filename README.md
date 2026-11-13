@@ -30,8 +30,8 @@ rules. Doing this as a group, with everyone building on the latest best, is borr
   [`ksfo/README.md`](ksfo/README.md).
 - **Aircraft.** Bank-limited turns, racetrack holds, gradual climbs and descents, 3° glidepaths
   with flare and touchdown, taxi and pushback, and wake categories. Pilots take a moment to
-  respond and occasionally get things wrong. Arrivals carry limited holding fuel: they call
-  minimum fuel, then Mayday fuel, and must be worked in with priority or diverted to Oakland.
+  respond and occasionally get things wrong. Arrivals carry extra holding fuel and alternate fuel (14 CFR 121.639):
+  they call minimum fuel when the extra runs low, then Mayday fuel once the alternate fuel is spent, and must be worked in with priority or diverted to Oakland.
 - **One controller for four positions.** Ground, Tower, Approach and Departure all live in
   [`controller.py`](controller.py) and speak FAA phraseology
   ([`atc/commands.py`](atc/commands.py), each instruction citing its 7110.65 paragraph).

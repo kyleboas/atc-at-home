@@ -87,9 +87,10 @@ result as an issue so contributors don't repeat each other.
 - Holds (4-6-1, 4-6-4): every holding clearance carries an expect-further-clearance time
   (`efc`, session seconds) and an altitude at or above the MVA. Leaving the hold needs a
   clearance beyond the fix (4-6-2, `C.exit_hold`).
-- Fuel (2-1-4, 10-2-5): arrivals carry a limited holding allowance. Under 5 minutes of spare fuel
-  they call minimum fuel (no priority, 2-1-8 notes it); when spare runs out they declare Mayday
-  fuel. A Mayday aircraft gets priority: work it in at once (`direct_to`, `exit_hold`,
+- Fuel (2-1-4, 10-2-5): arrivals carry extra fuel for holding (10-25 min narrowbodies, 25-45 min
+  widebodies), then 15-25 min of alternate fuel, then the final reserve. Under 5 minutes of extra
+  left they call minimum fuel (no priority, 2-1-8 notes it); once the alternate fuel is spent too
+  they declare Mayday fuel. A Mayday aircraft gets priority: work it in at once (`direct_to`, `exit_hold`,
   `cleared_approach`, `vector`), or if it cannot land in time clear it to Oakland
   (`C.cleared_to_airport(cs, airport="KOAK", altitude=...)`, 4-2-1). It must land within its
   direct time to land + 5 minutes of the Mayday or be diverted, otherwise it is a hard

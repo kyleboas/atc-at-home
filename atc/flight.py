@@ -157,6 +157,10 @@ class Aircraft:
         # scenario stays the same.
         frng = random.Random(f"{seed}:{self.cs}:fuel")
         self.fuel_extra_s = 60 * (frng.uniform(25, 45) if self.wake in ("H", "J") else frng.uniform(10, 25))
+        # Alternate fuel (14 CFR 121.639): a missed approach at SFO and the flight to the alternate
+        # (Oakland, San Jose or Sacramento), about 15-25 min. Once the extra is spent the crew is at
+        # its diversion point; holding on into the alternate fuel leaves it landing on its final reserve.
+        self.fuel_alt_s = 60 * frng.uniform(15, 25)
 
     @property
     def airborne(self):
