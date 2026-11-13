@@ -315,6 +315,8 @@ function draw() {
     ctx.fillStyle = isBad ? SCOPE.alert : (FREQ[freq] || SCOPE.text);
     ctx.fillText((freq && freq !== '-' ? freq : '·').toUpperCase(), px, py + 0.5*dpr);
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    // airspace, terminal and field views: aircraft on the ground show no data block until tapped (alerts still do)
+    if (!air && view.half > 2 && !isSel && !isBad) continue;
     // leader line up and to the right, then the data block
     const dbCol = isBad ? SCOPE.alert : isSel ? SCOPE.dbSel : SCOPE.db;
     const lx = px + 10*dpr, ly = py - 10*dpr;
