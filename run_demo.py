@@ -70,11 +70,16 @@ def world_data():
         procs.append(out)
         return pts
 
-    for star, trans, _, rwys, _ in scenarios.STARS:
+    # only the configuration in use: its STARs to its landing runways, their approaches, and the
+    # SIDs off its departure runways (a simulator without configurations has the West Plan only)
+    stars = getattr(scenarios, "ARRIVAL_STARS", {}).get(getattr(W, "CONFIG_KEY", None), scenarios.STARS)
+    for star, trans, _, rwys, _ in stars:
         for tr in trans:
             for r in rwys:
                 add(f"{star}{'.' + tr if tr else ''}", "star", P.star_legs(star, tr, r), group=star)
     for rwy, kinds in P.APPROACH_IDS.items():
+        if rwy not in W.ARR_RUNWAYS:
+            continue
         for kind, pid in kinds.items():
             for tr in P.approach_transitions(pid):
                 legs = [lg for lg in P.approach_legs(pid, tr) if lg["tag"] == "app"]
