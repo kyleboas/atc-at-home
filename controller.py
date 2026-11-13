@@ -428,7 +428,7 @@ class Ground:
                 continue
             k = r["kind"]
             if k == "request_pushback" and c.quiet(a["cs"], 3):
-                if self.push_conflict(a, acs):
+                if self.push_conflict(a, acs) or self.dep_queue_full(acs):
                     if a["phase"] == "gate_req" and c.once(a["cs"], "push_wait"):
                         c.send(out, C.hold_position(a["cs"]))
                     continue
@@ -448,7 +448,8 @@ class Ground:
                     c.send(out, C.taxi_to_parking(a["cs"], via=via))
         # pushbacks held for traffic: release when clear
         for a in acs.values():
-            if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs):
+            if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs) \
+                    and not self.dep_queue_full(acs):
                 c.send(out, C.pushback_approved(a["cs"], expect_runway=a["runway"]))
         self.deconflict(acs, out)
         # runway crossings on the taxi route (3-7-2, anticipated)
@@ -463,6 +464,14 @@ class Ground:
                 continue
             if c.tower.crossing_ok(nxt["rwy"], a, acs):
                 c.send(out, C.cross_runway(a["cs"], runway=nxt["rwy"]))
+
+    DEP_QUEUE = 4
+
+    def dep_queue_full(self, acs):
+        """Gate hold: enough departures already between the gate and the runway."""
+        n = sum(1 for o in acs.values() if o["intent"] == "departure" and
+                o["phase"] in ("pushing", "pushed", "taxiing", "holding_short", "lining_up"))
+        return n >= self.DEP_QUEUE
 
     def deconflict(self, acs, out):
         """Opposite-direction traffic on the same taxiway (3-7-1): the aircraft that reaches the
@@ -863,6 +872,8 @@ class Tower:
                         return True
                 if o["phase"] in ("lined_up",) and o["takeoff_cleared"] and e < 50:
                     return True
+                if o["phase"] == "rto" and not self.beyond(o, o["runway"], rw) and e < 50:
+                    return True                      # rejected takeoff short of the intersection (3-10-4)
                 if rw in (o.get("zone") or []) and o["phase"] not in ("airborne",):
                     if e < 15:
                         return True
@@ -923,11 +934,14 @@ class Tower:
                    for o in acs.values())
 
     def unsafe_now(self, a, acs):
-        """Lined up with a takeoff clearance and the roll would now be unsafe (arrival close)."""
+        """Lined up with a takeoff clearance and the roll would now be unsafe: only for traffic on or
+        crossing the runway. A close arrival goes around instead (must_go_around), so a cancel never
+        reaches a pilot just as the roll starts (the sim then leaves it stopped on the runway)."""
         rw = a["runway"]
         for o in acs.values():
             if o is not a and (crossing_near(o, rw) or (on_runway(o, rw) and o["phase"] in ("taxiing", "taxi_in", "clear"))):
                 return True                          # crossing traffic on the runway (3-9-8)
+        return False
         for e, o in self.arrivals(acs):
             if (rw, o["runway"]) in W.INTERSECTIONS and e < self.ROLL_BEYOND_S + 6:
                 return True
