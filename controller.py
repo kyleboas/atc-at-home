@@ -428,7 +428,7 @@ class Ground:
                 continue
             k = r["kind"]
             if k == "request_pushback" and c.quiet(a["cs"], 3):
-                if self.push_conflict(a, acs):
+                if self.push_conflict(a, acs) or self.dep_queue_full(acs):
                     if a["phase"] == "gate_req" and c.once(a["cs"], "push_wait"):
                         c.send(out, C.hold_position(a["cs"]))
                     continue
@@ -448,7 +448,8 @@ class Ground:
                     c.send(out, C.taxi_to_parking(a["cs"], via=via))
         # pushbacks held for traffic: release when clear
         for a in acs.values():
-            if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs):
+            if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs) \
+                    and not self.dep_queue_full(acs):
                 c.send(out, C.pushback_approved(a["cs"], expect_runway=a["runway"]))
         self.deconflict(acs, out)
         # runway crossings on the taxi route (3-7-2, anticipated)
@@ -463,6 +464,14 @@ class Ground:
                 continue
             if c.tower.crossing_ok(nxt["rwy"], a, acs):
                 c.send(out, C.cross_runway(a["cs"], runway=nxt["rwy"]))
+
+    DEP_QUEUE = 6
+
+    def dep_queue_full(self, acs):
+        """Gate hold: enough departures already between the gate and the runway."""
+        n = sum(1 for o in acs.values() if o["intent"] == "departure" and
+                o["phase"] in ("pushing", "pushed", "taxiing", "holding_short", "lining_up"))
+        return n >= self.DEP_QUEUE
 
     def deconflict(self, acs, out):
         """Opposite-direction traffic on the same taxiway (3-7-1): the aircraft that reaches the
