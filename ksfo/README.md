@@ -41,6 +41,7 @@ ksfo/
   data/procedures.json   39 procedures -> transitions -> ARINC legs
   data/fixes.json        191 fixes/navaids/thresholds referenced (+ all KSFO terminal waypoints)
   data/holds.json        15 holding patterns (HM legs)
+  data/star_holds.json   22 holds charted on the STARs (hand entered from the d-TPP charts)
   data/surface.json      OSM taxiway graph, stands, gates, holding points, aprons (ODbL)
   data/mva.json          NCT MVA sectors (FUS3 150 + FUS5 59) as polygons
   map.html         self-contained check map (data embedded, ~0.8 MB)
@@ -88,6 +89,24 @@ ARINC altitude codes kept as published: `+` at or above, `-` at or below, blank/
 
 ### `holds.json`
 `holds[]`: `fix, procedure, leg_type, inbound_course_deg` (magnetic), `turn`, `leg_nm` or `leg_min`, `altitude`, `speed_kt`. All are missed-approach holds (HM). No enroute holding records (`EP`) exist in this CIFP.
+
+### `star_holds.json`
+The holds drawn on the STAR charts, which the CIFP does not code. They are hand-entered from the d-TPP cycle 2611 charts and use the same fields as `holds.json`, with `kind: "STAR"`, `procedure` set to the STAR and `leg_type: "charted"`.
+
+| STAR | Fix | Inbound (mag) | Turns | Legs |
+|---|---|---|---|---|
+| SERFR4, WWAVS2 | SERFR, NRRLI | 314° | left | 10 NM |
+| SERFR4, WWAVS2 | WWAVS | 313° | left | 10 NM |
+| SERFR4 | EPICK | 333° | left | 10 NM |
+| WWAVS2 | WPOUT | 306° | left | 10 NM |
+| DYAMD5, ALWYS3 | INYOE | 248° | left | 16 NM |
+| DYAMD5 | ALWYS, FLOWZ | 247° | left | 10 NM |
+| ALWYS3 | LAANE | 247° | left | 10 NM |
+| ALWYS3 | ALWYS | 269° | left | 10 NM |
+| BDEGA4, STLER4 | MLBEC, BGGLO, LOZIT | 153° | right | 10 NM |
+| BDEGA4, STLER4 | AMAKR | 121° | right | 10 NM |
+
+YOSEM3 charts no holds. LOZIT is limited to 9000–16000 (its FAA charted-holding record). `data.HOLDS` holds both files, and `data.published_hold(fix, star)` prefers the hold charted on the aircraft's STAR. ALWYS is held inbound 247° on the DYAMD5 and 269° on the ALWYS3. A "hold as published" at a fix with a published hold flies that hold's course, turns and legs. At any other fix, the controller's turns are used with timed legs.
 
 ### `surface.json` (OSM, ODbL)
 * `nodes{id: {x, y, lat, lon, osm_node?, holding_position?, stand?, gate_ref?, edges[], degree, main_component}}`. Ids: `n<osm id>`, `s<k>` (where an OSM holding-position line crosses a taxiway), `j<k>` (where an isolated stand line was joined to a taxiway).

@@ -32,7 +32,7 @@ from atc.sim import Sim    # noqa: E402
 FROZEN = ["atc/__init__.py", "atc/world.py", "atc/procs.py", "atc/flight.py", "atc/commands.py", "atc/sim.py",
           "atc/rules.py", "atc/scenarios.py", "evaluate.py", "ksfo/__init__.py", "ksfo/data.py", "ksfo/geo.py",
           "ksfo/data/airport.json", "ksfo/data/procedures.json", "ksfo/data/fixes.json", "ksfo/data/holds.json",
-          "ksfo/data/surface.json", "ksfo/data/mva.json"]
+          "ksfo/data/star_holds.json", "ksfo/data/surface.json", "ksfo/data/mva.json"]
 WEIGHTS = {"hard": 100, "rule": 10, "service": 2, "go_around": 3}
 DIVERT_DELAY_S = 3600
 SESSION_S = 40 * 60     # cost is reported per 40-minute session (the length of a train scenario)

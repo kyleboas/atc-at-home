@@ -56,6 +56,11 @@ def world_data():
             if lg["pt"] in ("HM", "HA", "HF") and lg.get("pos"):
                 h = lg["hold"]
                 out["holds"].append([r3(p) for p in P.hold_racetrack(lg["pos"], h["crs"], h["turn"], h["leg_nm"], h["leg_min"] or 1.0)])
+            if kind == "star" and lg.get("fix") and lg.get("pos") is not None:     # holds charted on the STAR
+                h = W.K.published_hold(lg["fix"], group)
+                if h and h["procedure"] == group:
+                    out["holds"].append([r3(p) for p in P.hold_racetrack(
+                        lg["pos"], W.mag2true(h["inbound_course_deg"]), "R" if h["turn"] == "right" else "L", h["leg_nm"])])
         labels = []
         for lg in legs:
             if lg.get("fix") and lg.get("pos") is not None and (lg["amin"] or lg["amax"] or lg.get("spd")):

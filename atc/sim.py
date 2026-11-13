@@ -1908,7 +1908,7 @@ class Sim:
         crs = ac.hdg
         if lg is not None and ac.leg_from is not None and lg.get("pos") is not None:
             crs = W.bearing(ac.leg_from, lg["pos"]) if W.dist(ac.leg_from, lg["pos"]) > 0.5 else ac.hdg
-        pub = next((h for h in W.K.HOLDS if lg is not None and h["fix"] == lg.get("fix")), None)
+        pub = W.K.published_hold(lg.get("fix"), ac.star) if lg is not None else None
         if pub:
             crs, turns = W.mag2true(pub["inbound_course_deg"]), "R" if pub["turn"] == "right" else "L"
         else:
@@ -1916,7 +1916,7 @@ class Sim:
         if lg is not None and lg.get("pos"):
             crs = W.bearing(ac.leg_from if ac.leg_from and W.dist(ac.leg_from, lg["pos"]) > 0.5 else (ac.x, ac.y), lg["pos"]) \
                 if not pub else crs
-        F.start_hold(ac, fix, crs, turns, kind="limit")
+        F.start_hold(ac, fix, crs, turns, kind="limit", leg_min=pub and pub["leg_min"], leg_nm=pub and pub["leg_nm"])
         ac.hold_alt = ac.hold_alt or int(round(ac.alt / 100.0) * 100)
         self.monitor.on_event("clearance_limit", ac)
 
@@ -1924,16 +1924,17 @@ class Sim:
         hf = ac.hold_fix
         lg = ac.legs[0]
         pos = lg["pos"]
-        pub = next((h for h in W.K.HOLDS if h["fix"] == hf["fix"]), None)
-        if pub:
-            crs = W.mag2true(pub["inbound_course_deg"])
+        pub = W.K.published_hold(hf["fix"], ac.star)
+        turns = hf["turns"]
+        if pub:     # "hold as published": the charted inbound course, turns and leg length
+            crs, turns = W.mag2true(pub["inbound_course_deg"]), "R" if pub["turn"] == "right" else "L"
         else:
             crs = F.leg_course_at(ac.leg_from or (ac.x, ac.y), lg) or ac.hdg
             if lg["pt"] in ("TF", "DF", "IF") and ac.leg_from:
                 crs = W.bearing(ac.leg_from, pos) if W.dist(ac.leg_from, pos) > 0.3 else ac.hdg
         ac.legs = ac.legs[1:]
         ac._cum = None
-        F.start_hold(ac, pos, crs, hf["turns"], kind="atc")
+        F.start_hold(ac, pos, crs, turns, kind="atc", leg_min=pub and pub["leg_min"], leg_nm=pub and pub["leg_nm"])
         ac.hold_alt = hf["alt"]
 
     def check_capture(self, ac):

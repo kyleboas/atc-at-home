@@ -30,6 +30,7 @@ AIRPORT = _load("airport.json")
 _PROCS = _load("procedures.json")
 _FIXES = _load("fixes.json")
 _HOLDS = _load("holds.json")
+_STAR_HOLDS = _load("star_holds.json")   # charted STAR holds, hand entered from the d-TPP STAR charts
 SURFACE = _load("surface.json")
 try:
     _MVA = _load("mva.json")
@@ -88,7 +89,14 @@ PROCEDURES = {p["id"]: p for p in _PROCS["procedures"]}
 SID_IDS = sorted(k for k, p in PROCEDURES.items() if p["kind"] == "SID")
 STAR_IDS = sorted(k for k, p in PROCEDURES.items() if p["kind"] == "STAR")
 APPROACH_IDS = sorted(k for k, p in PROCEDURES.items() if p["kind"] == "APPROACH")
-HOLDS = _HOLDS["holds"]
+HOLDS = _HOLDS["holds"] + _STAR_HOLDS["holds"]
+
+
+def published_hold(fix, star=None):
+    """The published hold at `fix`: the one charted on `star` if that STAR charts one there (ALWYS
+    is held on 247 on the DYAMD5 and 269 on the ALWYS3), else any hold published at the fix."""
+    at = [h for h in HOLDS if h["fix"] == fix]
+    return next((h for h in at if h["procedure"] == star), None) or (at[0] if at else None)
 
 
 def leg_pos(leg):
