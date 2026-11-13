@@ -46,6 +46,12 @@ def _alt(leg):
     return lo, hi
 
 
+def _at_threshold(leg):
+    """A missed approach point charted at a runway threshold under its own name (RNAV (GPS) 10L:
+    TUZCU), the runway fix of that approach."""
+    return leg["pos"] is not None and any(W.dist(leg["pos"], r.thr) < 0.1 for r in W.RUNWAYS.values())
+
+
 def compile_leg(raw, tag, proc, ils_course=None):
     pt = raw["path_term"]
     crs = raw.get("course_deg")
@@ -70,7 +76,8 @@ def compile_leg(raw, tag, proc, ils_course=None):
     if pt in ("HM", "HA", "HF"):
         leg["hold"] = {"crs": crs, "turn": leg["turn"] or "R", "leg_min": raw.get("hold_time_min"),
                        "leg_nm": raw.get("distance_nm") if raw.get("hold_time_min") is None else None}
-    if leg["fix"] and leg["fix"].startswith("RW") and tag == "final":
+    if leg["fix"] and tag == "final" and (leg["fix"].startswith("RW") or
+                                          (raw.get("role") == "missed approach point" and _at_threshold(leg))):
         leg["map"] = True
         leg["amin"] = leg["amax"] = None       # threshold crossing height: flown on the glidepath
     if raw.get("role") == "FAF":
