@@ -1398,6 +1398,17 @@ class Approach:
         self.cleared.add(cs)
         self.committed[cs] = self.sta.get(cs, self.c.t)
 
+    def straight_in_if(self, a, end):
+        """The STAR ends on the extended final beyond the IF with no transition onto the approach
+        (YOSEM3 at FAITH for 28R): the approach's IF, to proceed direct to it before the clearance."""
+        pid = P.APPROACH_IDS[a["runway"]].get(self.kind_of(a))
+        if not pid or P.transition_for(pid, end) or end in [lg.get("fix") for lg in P.approach_legs(pid)]:
+            return None
+        fix, pos, _ = P.intermediate_fix(pid)
+        R = W.RUNWAYS[a["runway"]]
+        along, off = R.to_thr(*W.K.FIXES[end])
+        return fix if abs(off) < 1.0 and along > R.to_thr(*pos)[0] + 1 else None
+
     def joins_off_heading(self, a):
         """The STAR ends in a heading leg from a fix on the approach (ALWYS3 at BERKS): cleared on
         the way to that fix it is established at once, so it must be down to the glidepath first."""
@@ -1476,8 +1487,18 @@ class Approach:
             p = W.K.FIXES.get(end)
             if p and dist((a["x"], a["y"]), p) < 14 and route.index(end) <= 1 and \
                     (not self.joins_off_heading(a) or not self.above_glidepath(a)):
+                fix = self.straight_in_if(a, end)
+                if fix:
+                    if c.quiet(cs, 20):
+                        c.send(out, C.direct_to(cs, fix=fix))  # join the final at its IF (4-8-1)
+                    return
                 self.clear(a, out)
                 return
+        # 2b) direct to the IF off a STAR without a transition: cleared once the route leads there
+        if end and cs not in self.cleared and not through and route and \
+                route[0] == self.straight_in_if(a, end) and not a["holding"]:
+            self.clear(a, out)
+            return
         # 3) too early even at the slowest speed and no hold ahead: a 360 (5-6-2) if nobody follows close
         if delay > absorb + 45 and not a["established"] and rem > 10 and c.quiet(cs, 40) \
                 and self.t360.get(cs, -999) < c.t - 200 and not self.followed(a, acs):
