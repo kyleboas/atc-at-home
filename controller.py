@@ -1110,6 +1110,7 @@ class Approach:
         self.level = {}         # cs -> (altitude, other cs): conflict probe level-offs
         self.reseq = set()      # vectored arrivals moved to the first uncommitted slot
         self.priority = set()   # Mayday fuel worked in ahead of the uncommitted sequence
+        self.minfuel = set()    # minimum fuel moved ahead of the uncommitted sequence (once)
         self.acs = {}
 
     # ---- spacing
@@ -1194,6 +1195,35 @@ class Approach:
             sta = self.slots(arr)
         self.sta = sta
         return arr
+
+    def minimum_fuel(self, arr):
+        """Minimum fuel (2-1-8: no priority is required) still costs the most if it waits: once,
+        move it ahead of arrivals that can still absorb delay (holding with laps to spare, not yet
+        committed to a slot), behind everything physically ahead of it. Returns True if moved."""
+        moved = False
+        for i, (key, eta, a) in enumerate(arr):
+            cs = a["cs"]
+            if a["fuel"] != "minimum" or cs in self.minfuel or cs in self.priority or a["freq"] != "approach" \
+                    or not a["radar_contact"] or a["established"] or cs in self.cleared:
+                continue
+            self.minfuel.add(cs)
+            h = self.hold.get(cs)
+            below = set()
+            if h is not None and not h.get("out"):
+                below = {o for o, hh in self.hold.items() if o != cs and o in self.acs and hh["fix"] == h["fix"]
+                         and hh["alt"] < h["alt"] and not hh.get("out")}
+            rest = [p for p in arr if p[2]["cs"] != cs]
+            j = 0
+            for m, (k, e, o) in enumerate(rest):
+                ocs = o["cs"]
+                if o["established"] or ocs in below or ocs in self.priority or ocs in self.minfuel \
+                        or o["fuel"] or e < eta + 30 or ocs in self.cleared or self.committed_to_slot(o):
+                    j = m + 1
+            if j < i:
+                lo = rest[j - 1][0] if j > 0 else rest[0][0] - 2.0
+                self.key[cs] = (lo + rest[j][0]) / 2.0
+                moved = True
+        return moved
 
     def emergencies(self, arr, t, out):
         """Mayday fuel: priority over all other traffic (7110.65 2-1-4). It lands behind only what
@@ -1323,6 +1353,8 @@ class Approach:
             c.send(out, C.expect_approach(a["cs"], approach=kind, runway=a["runway"], then=then))
             self.kind[a["cs"]] = kind
         arr = self.schedule(acs, t)
+        if self.minimum_fuel(arr):
+            arr = self.schedule(acs, t)
         if self.emergencies(arr, t, out):
             arr = self.schedule(acs, t)
         for key, eta, a in arr:
