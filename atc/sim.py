@@ -2107,6 +2107,10 @@ class Sim:
         v_lim = math.sqrt(tk ** 2 + 2 * 2.0 * d * 3600)
         v0 = ac.gs
         ac.gs = max(v0 - decel, min(max(min(ve, v0), v0 - decel), v_lim))
+        if ac.phase == "rto" and v0 < min(ve, v_lim):
+            # a takeoff rejected at (or near) brake release: taxi on to the exit instead of
+            # stopping on the runway for good (it would otherwise keep v0, possibly 0 kt)
+            ac.gs = min(v0 + TAXI_ACC, ve, v_lim)
         ac.ias = ac.gs
         u += (v0 + ac.gs) / 2 / 3600
         v -= max(-0.001, min(0.001, v))
