@@ -1122,7 +1122,10 @@ class Approach:
         d = W.wake_nm(lead["wake"], fol["wake"])
         if same:
             d = max(d, 2.5)
-        g = max(d / vf * 3600 + 15, 85.0)            # 3 nm (+margin) at ~180 kt at the IF, until both established
+        mixed = set(W.DEP_RUNWAYS) - set(W.DEP_HEAVY)      # runways the general departure flow uses
+        paired = (not same and W.CSPR.get(lead["runway"]) == fol["runway"]
+                  and lead["runway"] not in mixed and fol["runway"] not in mixed)
+        g = max(d / vf * 3600 + 15, 75.0 if paired else 85.0)
         if lead["cs"] in self.vec or fol["cs"] in self.vec:
             g = max(g, 100.0)                        # a radar intercept crosses the published transitions
         if same:
