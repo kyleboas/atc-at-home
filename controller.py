@@ -157,6 +157,7 @@ HOLD_FIX = {"SERFR4": ("FOLET", 8000), "DYAMD5": ("FRELY", 8000), "YOSEM3": ("SO
 # turn direction: holding side away from the neighbouring stream (SOOIE left: DYAMD5 passes north)
 HOLD_TURNS = {"FOLET": "right", "FRELY": "right", "SOOIE": "left", "BDEGA": "right"}
 HOLD_LAP_S = 240
+EARLY_EXIT_S = 60           # a holder at the fix leaves this much early rather than fly another lap
 
 
 def final_xy(d):
@@ -1488,7 +1489,17 @@ class Approach:
                       if o in acs and hh["fix"] == h["fix"] and not hh.get("out"))
         lowest = same and same[0][1] == cs
         absorb = absorbable(c.perf(a), a["rem_nm"] or 0, a["alt"]) if a["star"] != "BDEGA4" else 30.0
-        if lowest and delay < absorb * 0.9 + 10 and c.once(cs, "exit_hold"):
+        # the pilot leaves only at the fix: at the last passage before it is due out, leave now
+        # (up to EARLY_EXIT_S early, absorbed by speed or a 360) rather than a lap late
+        early = 0.0
+        hi = a.get("hold_info")
+        if hi and a["holding"]:
+            fx, fy = W.K.FIXES[h["fix"]]
+            ux, uy = W.unit(hi["crs"])
+            along = (fx - a["x"]) * ux + (fy - a["y"]) * uy
+            if abs((a["hdg"] - hi["crs"] + 180) % 360 - 180) < 30 and 0 < along < max(a["gs"], 150) / 3600 * 25:
+                early = EARLY_EXIT_S
+        if lowest and delay < absorb * 0.9 + 10 + early and c.once(cs, "exit_hold"):
             h["out"] = True
             c.send(out, C.exit_hold(cs))
             out.append(C.descend_via(cs))
