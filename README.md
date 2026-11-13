@@ -91,8 +91,8 @@ A controller beats the current best only if all three of these hold
 
 1. It has no more **hard** violations (loss of separation, collision alarms, near misses, terrain).
 2. It has no more **approach or taxi** violations (7110.65 5-9 and 3-7: intercepts, approach
-   clearances, transfer to tower, taxiing). Lowering cost doesn't make up for an increase here.
-3. Its **cost** is lower, where cost = hard × 100 + rule × 10 + service × 2 + go-arounds × 3 +
+   clearances, transfer to tower, taxiing). Lowering the score doesn't make up for an increase here.
+3. Its **score** is lower (lower is better), where score = hard × 100 + rule × 10 + service × 2 + go-arounds × 3 +
    delay minutes (a diversion counts as 60), per 40 minutes of each scenario.
 
 The official score is the one the GitHub check posts on your pull request. If a pull request

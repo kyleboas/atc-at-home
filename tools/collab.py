@@ -92,7 +92,7 @@ def similar(idea, rows):
 def cmd_status(_):
     best = upstream_best()
     if best:
-        print(f"Current best: cost {best['cost']}, hard {best['hard']}, manual {manual(best)} "
+        print(f"Current best: score {best['cost']}, hard {best['hard']}, manual {manual(best)} "
               f"(commit {best.get('commit')}, by {best.get('author') or '?'}: {best.get('note', '')[:80]})")
     open_ = issues("open")
     claims = [r for r in open_ if r["kind"] == "claim"]
@@ -225,7 +225,7 @@ def cmd_submit(_):
         raise SystemExit(f"A submission may only change controller.py; this branch changes {changed}. "
                          "Start from `collab.py pull-best`.")
     log = run("git", "log", "--format=%s", f"{up}/main..HEAD")
-    title = log.splitlines()[0].split(": cost")[0] if log else "controller improvement"
+    title = log.splitlines()[0].split(": score")[0].split(": cost")[0] if log else "controller improvement"
     branch = "submit-" + run("git", "rev-parse", "--short", "HEAD")
     run("git", "push", "-q", "-f", "origin", f"HEAD:refs/heads/{branch}")
     me = run("gh", "api", "user", "--jq", ".login")

@@ -31,7 +31,7 @@ jobs:
             const REASONS = {
               hard: 'more hard violations (separation, collision alarms, near misses, terrain) than the current best',
               manual: 'more approach / taxi violations (FAA 5-9, 3-7) than the current best',
-              cost: 'cost is not lower than the current best',
+              cost: 'score is not lower than the current best',
             };
             let body;
             if (!r) {
@@ -42,7 +42,7 @@ jobs:
               const row = (k, a, c) => `| ${k} | ${n(a)} | ${n(c)} |`;
               body = ['### atc-at-home: training score', '',
                 '| | this submission | current best |', '|---|---|---|',
-                row('cost', r.cost, b.cost), row('hard violations', r.hard, b.hard),
+                row('score (lower is better)', r.cost, b.cost), row('hard violations', r.hard, b.hard),
                 row('approach/taxi (5-9, 3-7)', r.manual, b.manual), row('rule violations', r.rule, b.rule),
                 row('go-arounds', r.go_arounds, b.go_arounds), '',
                 r.beats_best ? '✅ **Beats the current best.** The held-out check runs next and posts its result here.'

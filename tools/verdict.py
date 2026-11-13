@@ -7,14 +7,14 @@ A candidate beats the best only if ALL of these hold:
   - hard violations did not increase (separation, collision alarms, near misses, terrain);
   - approach and taxi violations of FAA JO 7110.65 (5-9 radar approaches: intercepts,
     approach clearance, transfer to tower; 3-7 taxi and ground movement) did not increase;
-  - cost went down.
+  - the score (lower is better) went down.
 """
 MANUAL = ("5-9", "3-7")  # FAA JO 7110.65 paragraph prefixes
 
 REASONS = {
     "hard": "more hard violations (separation, collision alarms, near misses, terrain) than the current best",
     "manual": "more approach / taxi violations (FAA 5-9, 3-7) than the current best",
-    "cost": "cost is not lower than the current best",
+    "cost": "score is not lower than the current best",
 }
 
 
