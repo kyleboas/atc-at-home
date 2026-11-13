@@ -68,11 +68,37 @@ def dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def mva_ahead(x, y, hdg_true, gs, minutes=3.0):
-    """Highest MVA along the next `minutes` on this heading."""
+def mva_ahead(x, y, hdg_true, gs, minutes=3.0, from_hdg=None):
+    """Highest MVA along the next `minutes` on this heading; with `from_hdg`, along the turn
+    onto it (shorter way, ~2.2 deg/s) and then straight on (a big turn swings out ~R)."""
+    if from_hdg is not None and abs(W.ang_diff(hdg_true, from_hdg)) > 20:
+        v = max(gs, 150) / 3600
+        h, px, py, worst = from_hdg, x, y, W.mva(x, y)
+        for t in range(int(minutes * 60)):
+            d = W.ang_diff(hdg_true, h)
+            if abs(d) > 0.1:
+                h = (h + max(-2.2, min(2.2, d))) % 360
+            ux, uy = W.unit(h)
+            px, py = px + ux * v, py + uy * v
+            if t % 5 == 0:
+                worst = max(worst, W.mva(px, py))
+        return worst
     ux, uy = W.unit(hdg_true)
     d = gs / 60 * minutes
     return max(W.mva(x + ux * d * k / 6, y + uy * d * k / 6) for k in range(7))
+
+
+def mva_for(a):
+    """Highest MVA where this aircraft is going in the next 3 min: around the whole circle in a
+    360, along the turn onto its assigned heading, else straight ahead (5-6-3)."""
+    x, y = a["x"], a["y"]
+    if a.get("leg") == "360":
+        r = 4.5
+        pts = [(x + r * math.sin(math.radians(b)), y + r * math.cos(math.radians(b))) for b in range(0, 360, 30)]
+        return max([W.mva(px, py) for px, py in pts] + [mva_ahead(x, y, a["hdg"], a["gs"])])
+    if a.get("nav") == "heading" and a.get("hdg_target_mag") is not None:
+        return mva_ahead(x, y, W.mag2true(a["hdg_target_mag"]), a["gs"], from_hdg=a["hdg"])
+    return mva_ahead(x, y, a["hdg"], a["gs"])
 
 
 def mva_clear_360(a, r=4.5):
@@ -795,6 +821,7 @@ class Tower:
     LINEUP_S = 35          # holding point -> lined up (measured ~25-45 s)
     ROLL_BEYOND_S = 42     # brake release -> beyond the intersection with the 28s
     REACT_S = 12           # worst pilot reaction + roll delay allowance beyond the typical
+    SAME_RWY_S = 70        # brake release -> airborne past the far end of a 28 (heavies ~60 s)
 
     def __init__(self, ctl):
         self.c = ctl
@@ -858,6 +885,8 @@ class Tower:
         for o in self.landing_users(acs):
             if (rw, o["runway"]) in W.INTERSECTIONS and not self.beyond(o, o["runway"], rw):
                 return False
+            if o["runway"] == rw or rw in (o.get("zone") or []):
+                return False                         # the arrival ahead has not vacated (3-9-6)
         if self.missed_near(acs):
             return False
         # the next arrival on either 28 must not reach the threshold before we are beyond the intersection
@@ -865,7 +894,16 @@ class Tower:
         for e, o in self.arrivals(acs):
             if (rw, o["runway"]) in W.INTERSECTIONS and e < need + 8:
                 return False
+            # the same runway: airborne and past the end before the arrival crosses the threshold
+            if o["runway"] == rw and e < extra_s + self.SAME_RWY_S + self.REACT_S + 8:
+                return False
         return True
+
+    def lineup_ok(self, a, acs):
+        """Line up and wait (3-9-4): on a runway in use for arrivals a departure goes from the
+        holding point when the gap is there (takeoff clearance), never waits in position in
+        front of the next arrival."""
+        return a["runway"] not in W.ARR_RUNWAYS
 
     def crossing_ok(self, rwy, a, acs):
         """3-7-2, 3-1-3: cross a landing runway only if nothing is landing or rolling toward the
@@ -953,6 +991,9 @@ class Tower:
                 return True
             if rw in (o.get("zone") or []) and o["phase"] in ("taxiing", "taxi_in", "clear", "holding_short") and e < 15:
                 return True
+            if o["intent"] == "departure" and o["runway"] == rw and o["phase"] in ("lining_up", "lined_up") \
+                    and not o["takeoff_cleared"] and e < 20:
+                return True                          # a departure still in position on our runway (3-10-3)
             if o["intent"] == "departure" and o["runway"] in W.DEP_RUNWAYS and (rw, o["runway"]) in W.INTERSECTIONS:
                 if o["phase"] == "rolling" and not self.beyond(o, o["runway"], rw):
                     # will it be beyond by the time we cross the threshold?
@@ -1005,7 +1046,7 @@ class Tower:
                         continue
                     other_lined = any(o["phase"] in ("lining_up", "lined_up") for o in acs.values()
                                       if o["runway"] == W.CSPR[rw] and o["intent"] == "departure")
-                    if not other_lined:
+                    if not other_lined and self.lineup_ok(a, acs):
                         c.send(out, C.line_up_and_wait(a["cs"], runway=rw))
                         continue
             for a in holding:
@@ -1321,7 +1362,8 @@ class Approach:
                         if v and v["phase"] in ("downwind", "missed_north"):
                             pass
                         elif v and v["phase"] == "base":
-                            c.send(out, C.vector(cs, altitude=self.intercept_alt(a, "base")))
+                            c.send(out, C.vector(cs, altitude=max(self.intercept_alt(a, "base"),
+                                                                  alt_above(mva_for(a)))))
                         elif not v:
                             c.send(out, C.descend_via(cs))
                 continue
@@ -1347,7 +1389,7 @@ class Approach:
                         continue
                 else:
                     lvl = alt_below(o["alt"] - 1000)
-                    lvl = max(lvl, alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])))
+                    lvl = max(lvl, alt_above(mva_for(a)))
                     if lvl > o["alt"] - 900:
                         continue
                 c.send(out, C.vector(cs, altitude=lvl))
@@ -1373,7 +1415,7 @@ class Approach:
                 if closest_approach(a, o, 120) > 3.3:
                     continue
                 lvl = alt_below(o["alt"] - 1000)
-                if lvl < alt_above(mva_ahead(a["x"], a["y"], a["hdg"], a["gs"])):
+                if lvl < alt_above(mva_for(a)):
                     lvl = alt_above(o["alt"] + 1000)
                 c.send(out, C.vector(cs, altitude=lvl))
                 self.level[cs] = (lvl, o["cs"])
@@ -1432,7 +1474,7 @@ class Approach:
         dfix = downwind_fix(a["star"], a["runway"]) if vs else None
         if vs and not a["holding"] and a["hold_fix"] is None \
                 and (a["leg"] == "vectors" or (route and route[0] == after_fix(a["star"], a["runway"]))):
-            alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"])))
+            alt = max(DOWNWIND_ALT, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"], from_hdg=a["hdg"])))
             c.send(out, C.vector(cs, heading=PAT.hdg(90), altitude=alt))
             out.append(C.maintain_speed(cs, kts=210, mode=None))
             self.vec[cs] = {"phase": "downwind"}
@@ -1653,13 +1695,13 @@ class Approach:
         if ph == "missed":
             # runway heading to the missed approach altitude, then right turn north over the bay
             if a["alt"] > 1500 and PAT.px(a["x"], a["y"]) < -1.5:
-                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(PAT.hdg(360)), a["gs"])))
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(PAT.hdg(360)), a["gs"], from_hdg=a["hdg"])))
                 c.send(out, C.vector(cs, heading=PAT.hdg(360), altitude=alt))
                 v["phase"] = "missed_north"
             return
         if ph == "missed_north":
             if PAT.py(a["x"], a["y"]) > 4.0:
-                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"])))
+                alt = max(5000, alt_above(mva_ahead(a["x"], a["y"], PAT.downwind_t, a["gs"], from_hdg=a["hdg"])))
                 c.send(out, C.vector(cs, heading=PAT.hdg(90), altitude=alt))
                 out.append(C.maintain_speed(cs, kts=210, mode=None))
                 self.speed[cs] = (210, "kts")
@@ -1693,7 +1735,7 @@ class Approach:
                     alt = self.intercept_alt(a, "base")
                 else:
                     alt = self.mirrored_intercept_alt(a)
-                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(base_mag), a["gs"])))
+                alt = max(alt, alt_above(mva_ahead(a["x"], a["y"], W.mag2true(base_mag), a["gs"], from_hdg=a["hdg"])))
                 if cs in self.level:
                     c.send(out, C.vector(cs, heading=base_mag))
                 else:
@@ -1759,7 +1801,7 @@ class Approach:
         lead = R * (1 - math.cos(math.radians(60)))
         if -off <= INTERCEPT_OFFSET + lead and abs(W.ang_diff(a["hdg"], base_t)) < 8:
             alt = max(self.mirrored_intercept_alt(a),
-                      alt_above(mva_ahead(a["x"], a["y"], W.mag2true(icpt), a["gs"])))
+                      alt_above(mva_ahead(a["x"], a["y"], W.mag2true(icpt), a["gs"], from_hdg=a["hdg"])))
             c.send(out, C.cleared_approach(cs, approach=PAT.kind, runway=PAT.ident, heading=icpt, altitude=alt))
             if a["alt"] > alt + 200 and cs not in self.level:
                 out.append(C.vector(cs, heading=icpt, altitude=alt))
@@ -1895,7 +1937,7 @@ class Departure:
                     lim = alt_below(min(o["alt"], o.get("alt_assigned") or o["alt"]) - 1000)
                 if lim < a["alt"] - 50:
                     lim = alt_above(a["alt"] - 50)       # never descend a departure
-                lim = max(lim, alt_above(max(W.mva(a["x"], a["y"]), mva_ahead(a["x"], a["y"], a["hdg"], a["gs"]))))
+                lim = max(lim, alt_above(max(W.mva(a["x"], a["y"]), mva_for(a))))
                 if best is None or lim < best:
                     best = lim
         return best
