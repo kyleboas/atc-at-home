@@ -135,7 +135,7 @@ def slowest_time(perf, rem, alt, gs_now=None):
     """The latest an arrival can land by speed control alone: 210 kts to 16 nm, then 160 kts to 4 nm."""
     caps = []
     if rem > 18:
-        caps.append((16.0, 210 if alt < 10500 else 250))
+        caps.append((16.0, 210))
     caps.append((4.0, 160))
     return time_to_go(perf, rem, alt, gs_now, caps=caps)
 
@@ -347,6 +347,7 @@ class Ground:
         self.wait = {}          # cs -> (cs it waits for, shared nodes)
         self.stopped = {}       # (cs, cs) -> t: both told to hold position, collision imminent
         self.held = {}          # cs -> (cs it yields to, t): stays holding until that traffic is clear
+        self.released = 0
 
     def route(self, start, goal, acs=None, me=None):
         """Shortest taxi route on the OSM graph (as the sim's pilots taxi it), never along a runway,
@@ -423,6 +424,7 @@ class Ground:
     def step(self, obs, acs, reqs, out):
         c = self.c
         t = obs["t"]
+        self.released = 0
         for r in reqs:
             a = acs.get(r["cs"])
             if a is None or a["freq"] != "ground":
@@ -434,6 +436,7 @@ class Ground:
                         c.send(out, C.hold_position(a["cs"]))
                     continue
                 c.send(out, C.pushback_approved(a["cs"], expect_runway=a["runway"]))
+                self.released += 1
             elif k == "request_taxi" and a["phase"] == "pushed" and c.quiet(a["cs"], 3):
                 nodes, via = self.route(a["gnode"], W.DEP_HOLD[a["runway"]], acs, a)
                 if nodes:
@@ -452,6 +455,7 @@ class Ground:
             if a["freq"] == "ground" and a["phase"] == "push_hold" and c.quiet(a["cs"], 10) and not self.push_conflict(a, acs) \
                     and not self.dep_queue_full(acs):
                 c.send(out, C.pushback_approved(a["cs"], expect_runway=a["runway"]))
+                self.released += 1
         self.deconflict(acs, out)
         # runway crossings on the taxi route (3-7-2, anticipated)
         for a in acs.values():
@@ -471,8 +475,8 @@ class Ground:
     def dep_queue_full(self, acs):
         """Gate hold: enough departures already between the gate and the runway."""
         n = sum(1 for o in acs.values() if o["intent"] == "departure" and
-                o["phase"] in ("pushing", "pushed", "taxiing", "holding_short", "lining_up"))
-        return n >= self.DEP_QUEUE
+                o["phase"] in ("pushing", "pushed", "taxiing", "holding_short", "lining_up", "lined_up"))
+        return n + self.released >= self.DEP_QUEUE
 
     def deconflict(self, acs, out):
         """Opposite-direction traffic on the same taxiway (3-7-1): the aircraft that reaches the
