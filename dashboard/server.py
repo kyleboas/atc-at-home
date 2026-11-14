@@ -407,7 +407,7 @@ def scope_setup():
             return {"ok": True, "t": time.time(), "center": [lat, lon], "nm": nm, "src": "sim", "aircraft": []}
 
     site = {"name": "atc-replay", "title": "KSFO AI ATC replay", "url": "https://atc.kyleboas.com/sim",
-            "start": "KSFO/52", "tl_home": True, "tl_bar": "strip"}
+            "start": "KSFO/52", "tl_home": True, "tl_bar": "strip", "airports": ["KSFO"]}
     SC.init(site, lambda: {"traffic": Empty(), "max_nm": 250, "features": ["timelapse", "radio"],
                            "endpoints": {"timelapse": REPLAYS.timelapse, "radio": REPLAYS.radio}})
     SC.STATIC["/replay"] = SC.STATIC["/live"]
