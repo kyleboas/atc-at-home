@@ -25,12 +25,13 @@ from collections import OrderedDict
 
 ZERO = 1                     # frame times are sim seconds + ZERO; the page shows them as elapsed time from ZERO
 BLOCK = 300                  # frames per compressed block (and per frames request)
-FORMAT = 1                # bump when convert()'s output changes, so stored conversions are redone
+FORMAT = 2                # bump when convert()'s output changes, so stored conversions are redone
 STORE_MAX = 300           # converted replays kept on disk (0.1-3.5 MB each)
 KEEP = 4                     # replays kept converted in memory
 SPEEDS = [4, 16, 32, 64, 128]
 GROUND = {"gate_req", "push_hold", "pushing", "pushed", "taxiing", "holding_short", "clear", "taxi_in", "pending"}
 RUNWAY = {"exiting", "lining_up", "lined_up", "rolling", "landing_roll", "rto"}
+CLEARED = re.compile(r"cleared (ILS|RNAV \(GPS\)|RNAV \(RNP\)) runway (\d\d[LRC]?) approach")
 WITH = re.compile(r"\bwith ([A-Z]{2,4}\d{1,5}[A-Z]{0,2})\b")
 FREQ = {"g": "#8b949e", "t": "#3fb950", "a": "#f0883e", "d": "#58a6ff", "c": "#bc8cff"}
 FREQ_NAME = {"g": "GND", "t": "TWR", "a": "APP", "d": "DEP", "c": "CTR"}
@@ -289,9 +290,38 @@ class Replays:
         code = re.search(r"information (\w+)", first["text"]) if first else None
         atis = {"KSFO": [{"type": "combined", "code": code.group(1)[0] if code else "", "text": first["text"], "time": ""}]} if first else {}
         return json.dumps({"ok": True, "head": head, "lines": lines, "colors": POS, "groups": GROUPS, "talk_s": 6,
-                           "alert_s": 20, "atis": atis}, separators=(",", ":")).encode()
+                           "alert_s": 20, "atis": atis,
+                           "procs": {"KSFO": self.procs_in_use(meta)}}, separators=(",", ":")).encode()
 
     # ------------------------------------------------------------------ scope's endpoints
+    def procs_in_use(self, meta):
+        """The procedures this session flew, by scope's (CIFP) names: each arrival's STAR and approach and each departure's
+        SID from the scenario, and any approach the controller cleared instead (the transcript)."""
+        sid, star, app, arr, dep = set(), set(), set(), set(meta["world"].get("arr") or []), set()
+        try:
+            from atc import procs as P
+            from atc import scenarios
+            ids = P.APPROACH_IDS
+            names = lambda rw, kind: P.APPROACH_NAMES.get((ids.get(rw) or {}).get(kind) or (ids.get(rw) or {}).get(P.default_approach(rw)) or "")   # noqa: E731
+            for f in scenarios.make(int(meta["seed"]))["traffic"]:
+                rw = f.get("runway") or ""
+                if f.get("star"):
+                    star.add(f["star"]); arr.add(rw)
+                    if names(rw, f.get("approach") or "ils"):
+                        app.add(names(rw, f.get("approach") or "ils"))
+                if f.get("sid"):
+                    sid.add(f["sid"]); dep.add(rw)
+            for l in meta.get("transcript") or []:
+                for kind, rw in CLEARED.findall(l.get("text") or ""):
+                    n = names(rw, {"ILS": "ils", "RNAV (GPS)": "gps", "RNAV (RNP)": "rnav"}[kind])
+                    if n:
+                        app.add(n)
+        except Exception:  # noqa: BLE001  (an older checkout's simulator: the page falls back to reading the ATIS)
+            return None
+        arr.discard(""); dep.discard("")
+        return {"arr": sorted(arr), "dep": sorted(dep or meta["world"].get("dep") or []), "sid": sorted(sid),
+                "star": sorted(star), "approach": sorted(app)}
+
     def timelapse(self, s):
         a = s("a", 10)
         if a == "list":
