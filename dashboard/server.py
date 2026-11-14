@@ -4,7 +4,8 @@
 
   /            the autoresearch view (same layout as the libero terminal UI), live
   /sim         replays: pick a kept controller version and a scenario
-  /replay      ?commit=abc123&seed=7  -> generated on demand, cached
+  /replay      ?commit=abc123&seed=7  -> generated on demand, cached, then played on kyleboas/scope (?tl=abc123-7)
+  /live/..., /api/live/...  scope's map files and endpoints (dashboard/replays.py)
   /api/state   JSON behind the live view
 
 Held-out scores for the baseline and every kept controller are computed here in
@@ -34,6 +35,26 @@ DEMO = os.path.join(os.path.dirname(ROOT), "if-ai-atc-full")
 os.makedirs(CACHE, exist_ok=True)
 sys.path.insert(0, ROOT)
 from atc import scenarios  # noqa: E402
+
+# The replays play on kyleboas/scope's page, served from this process: a scope checkout beside this repo
+# (ATC_SCOPE_DIR; on coding ~/scope, kept up to date by livescope's updater). Without one, /replay serves the
+# HTML replays as before.
+SCOPE_DIR = os.path.abspath(os.environ.get("ATC_SCOPE_DIR") or os.path.join(os.path.dirname(os.path.dirname(HERE)), "scope"))
+SC = None
+if os.path.isfile(os.path.join(SCOPE_DIR, "server.py")):
+    import importlib.util
+    # its ground-map and FAA diagram caches stay out of both checkouts
+    _sc_cache = os.path.abspath(os.environ.get("ATC_SCOPE_CACHE") or os.path.expanduser("~/.cache/atc-dashboard/scope"))
+    os.environ.setdefault("SCOPE_GROUND_DIR", os.path.join(_sc_cache, "ground"))
+    os.environ.setdefault("SCOPE_DIAGRAM_DIR", os.path.join(_sc_cache, "diagrams"))
+    sys.path.append(SCOPE_DIR)
+    try:
+        _spec = importlib.util.spec_from_file_location("scope_server", os.path.join(SCOPE_DIR, "server.py"))
+        SC = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(SC)
+    except Exception as e:  # noqa: BLE001
+        print("scope:", repr(e), file=sys.stderr)
+        SC = None
 
 HOLDOUT = os.path.join(CACHE, "holdout.json")
 if not os.path.exists(HOLDOUT) and os.path.basename(ROOT) == "if-ai-atc-full" \
@@ -369,11 +390,52 @@ Generated on first open (a few seconds).</p>
 <div class=grid>{''.join(cards)}</div></main>"""
 
 
-class Handler(BaseHTTPRequestHandler):
+REPLAYS = None
+
+
+def scope_setup():
+    """Serve the replays on scope: its page at /replay, the cached replays through its timelapse bar and radio log."""
+    global REPLAYS
+    if not SC:
+        return
+    sys.path.insert(1, HERE)
+    import replays
+    REPLAYS = replays.Replays(CACHE, ROOT)
+
+    class Empty:                                   # nothing live: the page only plays replays
+        def get(self, lat, lon, nm, **kw):
+            return {"ok": True, "t": time.time(), "center": [lat, lon], "nm": nm, "src": "sim", "aircraft": []}
+
+    site = {"name": "atc-replay", "title": "KSFO AI ATC replay", "url": "https://atc.kyleboas.com/sim",
+            "start": "KSFO/52", "tl_home": True}
+    SC.init(site, lambda: {"traffic": Empty(), "max_nm": 250, "features": ["timelapse", "radio"],
+                           "endpoints": {"timelapse": REPLAYS.timelapse, "radio": REPLAYS.radio}})
+    SC.STATIC["/replay"] = SC.STATIC["/live"]
+
+
+def scope_watch():
+    """Start again (same process, same arguments) when the scope checkout moves, so scope's changes reach
+    the replays without a deploy here (coding's updater restarts the dashboard only for dashboard/)."""
+    def head():
+        return subprocess.run(["git", "-C", SCOPE_DIR, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    was = head()
+    while was:
+        time.sleep(60)
+        now = head()
+        if now and now != was:
+            print(f"scope {was[:7]} -> {now[:7]}: restarting", file=sys.stderr)
+            sys.stderr.flush()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+Base = SC.Handler if SC else BaseHTTPRequestHandler
+
+
+class Handler(Base):
     def log_message(self, *a):
         pass
 
-    def send(self, body, ctype="text/html; charset=utf-8", code=200):
+    def reply(self, body, ctype="text/html; charset=utf-8", code=200):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -387,29 +449,43 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         try:
             if u.path == "/":
-                self.send(read(os.path.join(HERE, "index.html")))
+                self.reply(read(os.path.join(HERE, "index.html")))
             elif u.path == "/api/state":
-                self.send(json.dumps(state()), "application/json")
+                self.reply(json.dumps(state()), "application/json")
             elif u.path == "/ksfo":
-                self.send(read(os.path.join(os.path.dirname(ROOT), "if-ai-atc-ksfo", "ksfo", "map.html"))
-                          or "KSFO map not built")
+                self.reply(read(os.path.join(os.path.dirname(ROOT), "if-ai-atc-ksfo", "ksfo", "map.html"))
+                           or "KSFO map not built")
             elif u.path == "/sim":
-                self.send(sim_page(q))
+                self.reply(sim_page(q))
+            elif u.path == "/replay" and REPLAYS and q.get("tl"):
+                self.get()                                   # scope's page; it opens ?tl=<commit>-<seed>
             elif u.path == "/replay":
                 commit = q.get("commit", [""])[0]
                 seed = int(q.get("seed", ["7"])[0])
                 if not commit.isalnum():
-                    return self.send("bad commit", code=400)
-                self.send(replay(commit, seed))
+                    return self.reply("bad commit", code=400)
+                page = replay(commit, seed)                  # made (or found) in the cache
+                if REPLAYS and REPLAYS.path(f"{commit}-{seed}"):
+                    self.send_response(302)
+                    self.send_header("Location", f"/replay?tl={commit}-{seed}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.reply(page)
+            elif REPLAYS and (u.path.startswith("/live/") or u.path == "/api/live" or u.path.startswith("/api/live/")):
+                self.get()
             else:
-                self.send("not found", code=404)
+                self.reply("not found", code=404)
         except Exception as e:  # noqa: BLE001
-            self.send(f"error: {html.escape(repr(e))}", code=500)
+            self.reply(f"error: {html.escape(repr(e))}", code=500)
 
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8795
     host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
+    scope_setup()
+    if REPLAYS and os.environ.get("ATC_SCOPE_RELOAD") != "0":
+        threading.Thread(target=scope_watch, daemon=True).start()
     threading.Thread(target=community_worker, daemon=True).start()
     if "--no-holdout" not in sys.argv:          # only one server should score held-out runs
         threading.Thread(target=holdout_worker, daemon=True).start()
