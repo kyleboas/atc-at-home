@@ -84,7 +84,7 @@ def _a3(v):
 class Replays:
     def __init__(self, cache_dir, root, store=None):
         self.dir, self.root, self.store = cache_dir, root, store   # store: converted replays kept on disk (one each)
-        self.mem, self.lock, self.busy = OrderedDict(), threading.Lock(), {}
+        self.mem, self.lock, self.busy, self.heads = OrderedDict(), threading.Lock(), {}, {}
         self.one = threading.Lock()          # one conversion at a time (a long session peaks at ~200 MB while read)
         self._geo = None
 
@@ -348,8 +348,39 @@ class Replays:
         return {"ok": False, "error": "bad request"}
 
     def radio(self, s):
-        r = self.get(s("id", 40))
-        return r["meta"]["radio"] if r else {"ok": False, "error": "no such replay", "lines": []}
+        """The radio log, ATIS and procedures in use: from the conversion if it's done, else straight from the replay
+        file's head and transcript (well under a second), so the airport is set up while the frames still convert."""
+        rid = s("id", 40)
+        with self.lock:
+            r = self.mem.get(rid)
+            if r:
+                return r["meta"]["radio"]
+            if rid in self.heads:
+                return self.heads[rid]
+        p = self.path(rid)
+        if not p:
+            return {"ok": False, "error": "no such replay", "lines": []}
+        r = self.load(p)                         # converted on an earlier run
+        out = r["meta"]["radio"] if r else self.head(p)
+        with self.lock:
+            self.heads[rid] = out
+            while len(self.heads) > 32:
+                self.heads.pop(next(iter(self.heads)))
+        return out
+
+    def head(self, path):
+        with open(path, encoding="utf-8") as f:
+            s = f.read()
+        i = s.index("const DATA = ") + len("const DATA = ")
+        meta = {}
+        for key, v in _walk(s, i):               # everything before the frames
+            if key == "frame":
+                break
+            meta[key] = {k: v.get(k) for k in ("field", "config", "arr", "dep", "magvar")} if key == "world" else v
+        j = s.rfind('"transcript":')             # and the transcript, after them
+        if j > s.find('"frames":', i):
+            meta["transcript"] = _dec.raw_decode(s, _ws.match(s, j + len('"transcript":')).end())[0]
+        return self.radio_json(meta)
 
 
 _dur = {}
