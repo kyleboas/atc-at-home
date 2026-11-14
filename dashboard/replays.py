@@ -17,6 +17,7 @@ import bisect
 import json
 import math
 import os
+import pickle
 import re
 import threading
 import zlib
@@ -24,6 +25,8 @@ from collections import OrderedDict
 
 ZERO = 1                     # frame times are sim seconds + ZERO; the page shows them as elapsed time from ZERO
 BLOCK = 300                  # frames per compressed block (and per frames request)
+FORMAT = 1                # bump when convert()'s output changes, so stored conversions are redone
+STORE_MAX = 300           # converted replays kept on disk (0.1-3.5 MB each)
 KEEP = 4                     # replays kept converted in memory
 SPEEDS = [4, 16, 32, 64, 128]
 GROUND = {"gate_req", "push_hold", "pushing", "pushed", "taxiing", "holding_short", "clear", "taxi_in", "pending"}
@@ -78,8 +81,8 @@ def _a3(v):
 
 
 class Replays:
-    def __init__(self, cache_dir, root):
-        self.dir, self.root = cache_dir, root
+    def __init__(self, cache_dir, root, store=None):
+        self.dir, self.root, self.store = cache_dir, root, store   # store: converted replays kept on disk (one each)
         self.mem, self.lock, self.busy = OrderedDict(), threading.Lock(), {}
         self.one = threading.Lock()          # one conversion at a time (a long session peaks at ~200 MB while read)
         self._geo = None
@@ -152,8 +155,11 @@ class Replays:
             return self.mem.get(rid)
         try:
             p = self.path(rid)
-            with self.one:
-                r = self.convert(p) if p else None
+            r = self.load(p) if p else None
+            if p and r is None:
+                with self.one:
+                    r = self.convert(p)
+                self.save(p, r)
             with self.lock:
                 if r:
                     self.mem[rid] = r
@@ -164,6 +170,42 @@ class Replays:
             with self.lock:
                 self.busy.pop(rid, None)
             ev.set()
+
+    # converting takes ~40 s for a long session on the small server, so each is done once and kept on disk,
+    # named by the replay file's size and time (a regenerated replay converts again) and FORMAT
+    def stored(self, path):
+        st = os.stat(path)
+        return os.path.join(self.store, f"{os.path.basename(path)[:-5]}-{st.st_size}-{int(st.st_mtime)}-v{FORMAT}.pickle")
+
+    def load(self, path):
+        if not self.store:
+            return None
+        try:
+            with open(self.stored(path), "rb") as f:
+                return pickle.load(f)                # written by save() below, never from outside
+        except (OSError, EOFError, pickle.UnpicklingError, AttributeError, ValueError):
+            return None
+
+    def save(self, path, r):
+        if not self.store or not r:
+            return
+        try:
+            os.makedirs(self.store, exist_ok=True)
+            dest = self.stored(path)
+            tmp = dest + ".tmp"
+            with open(tmp, "wb") as f:
+                pickle.dump(r, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, dest)
+            keep = os.path.basename(dest)
+            pre = keep.split("-")[:3]                # replay-<commit>-<seed>: older copies of this one go
+            for n in os.listdir(self.store):
+                if n != keep and n.split("-")[:3] == pre:
+                    os.remove(os.path.join(self.store, n))
+            names = sorted((os.path.getmtime(os.path.join(self.store, n)), n) for n in os.listdir(self.store))
+            for _, n in names[:-STORE_MAX]:          # and the least recently converted past STORE_MAX
+                os.remove(os.path.join(self.store, n))
+        except OSError:
+            pass
 
     def convert(self, path):
         with open(path, encoding="utf-8") as f:

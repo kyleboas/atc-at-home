@@ -400,7 +400,7 @@ def scope_setup():
         return
     sys.path.insert(1, HERE)
     import replays
-    REPLAYS = replays.Replays(CACHE, ROOT)
+    REPLAYS = replays.Replays(CACHE, ROOT, os.path.join(_sc_cache, "replays"))
 
     class Empty:                                   # nothing live: the page only plays replays
         def get(self, lat, lon, nm, **kw):

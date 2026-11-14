@@ -10,7 +10,8 @@ pull it from GitHub, so change it here and push.
   (`atc/replay.html`, cached), then sends the browser to `/replay?tl=<commit>-<seed>`, which plays it on
   [scope](https://github.com/kyleboas/scope) (the same scope as livescope) with its timelapse bar and a
   radio log. The server runs scope in-process from a checkout beside this one (`ATC_SCOPE_DIR`, default
-  `../scope`; its map caches go in `ATC_SCOPE_CACHE`, default `~/.cache/atc-dashboard/scope`) and restarts
+  `../scope`; its map caches, and each replay once converted for it, go in `ATC_SCOPE_CACHE`, default
+  `~/.cache/atc-dashboard/scope`) and restarts
   itself when that checkout's commit changes (`ATC_SCOPE_RELOAD=0` turns that off). Without scope the old
   replay page is served.
 - `index.html`: the page.
