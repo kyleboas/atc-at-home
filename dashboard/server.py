@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -269,9 +270,12 @@ _community = {}
 
 
 def gh_api(path, raw=False):
-    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
-    args = [gh, "api", path] + (["-H", "Accept: application/vnd.github.raw"] if raw else [])
-    return json.loads(subprocess.run(args, capture_output=True, text=True, timeout=30, check=True).stdout)
+    """GitHub's API without a login (the repo is public, and 2 calls every 5 minutes fit its 60 an hour), so the
+    public server never holds a GitHub token."""
+    req = urllib.request.Request("https://api.github.com/" + path, headers={
+        "Accept": "application/vnd.github.raw" if raw else "application/vnd.github+json", "User-Agent": "atc-dashboard"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
 
 
 def community_worker():

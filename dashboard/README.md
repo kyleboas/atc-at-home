@@ -17,4 +17,10 @@ pull it from GitHub, so change it here and push.
 - `index.html`: the page.
 - `github_hook.py`: webhook for pull requests that pass both checks (see the file).
 
+On coding, `sudo bash deploy/install-service.sh` installs the dashboard as a sandboxed system service
+(`atc-dashboard`: its own throwaway user, this checkout, scope and `~/atc-mirror` read-only, the internet only;
+settings in `~/.config/atc-dashboard.env`) and `atc-update.timer`, which pulls main every minute and restarts the
+dashboard and webhook when `dashboard/` changed. The community feed reads GitHub's API without a login, so the
+server holds no GitHub token.
+
 Contributions still change only `controller.py`; this folder is not scored.
